@@ -28,9 +28,12 @@ and to estimate CMB parameter.
 Please see example/TestDeltamap.py to see how to fit cmb and fg parameters
 ## Example
 ### Preparation
+```
 cd example
 python run_pysm3.py LTD_config.ini
+```
 ### Test
+```
 python TestDeltamap.py LTD_config.ini Synch_var_3freq_r1e-2.ini 1
-
+```
 

@@ -1,5 +1,9 @@
 # extended-deltamap
 
+This is a package to remove themal dust emission and synchrotron radiation foreground in the cosmic microwave background (CMB) map
+and to estimate CMB parameter.
+
+
 ## enviroment
 - python>=3.7
 

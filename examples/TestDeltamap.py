@@ -6,14 +6,17 @@ import scipy
 import sympy
 import sys
 sys.path.append('../')
-from DeltaMap import templates, dmatrix,deltamap,covariance
+import templates, dmatrix,deltamap,covariance
 import scipy.constants.constants as constants
 import configparser
 import argparse
 from iminuit import Minuit
 
 from copy import deepcopy
-
+from collections import defaultdict
+class SafeDict(dict):
+  def __missing__(self, key):
+    return '{' + key + '}'
 
 def ReadCell(cl_s_name, nside , isScalar = True):
     cl_s = numpy.loadtxt(cl_s_name)
@@ -37,8 +40,8 @@ def ReturnNoiseSigma(noise ,nside,):
     return sigma
 
 def ReturnCMBMap(r, nside, fwhm):
-    Cl_s = ReadCell('/home/cmb/yminami/Git/DeltaMap/files/test_lensedcls_49T7H5WT3X.dat', nside, True)
-    Cl_t = ReadCell('/home/cmb/yminami/Git/DeltaMap/files/test_tenscls_49T7H5WT3X.dat', nside, False)
+    Cl_s = ReadCell('../files/test_lensedcls_49T7H5WT3X.dat', nside, True)
+    Cl_t = ReadCell('../files/test_tenscls_49T7H5WT3X.dat', nside, False)
     minlen= min( len(Cl_s[1]) , len(Cl_t[1]))
     cmbmap = healpy.synfast(
         Cl_s[:,:minlen] + Cl_t[:,:minlen] * r, lmax=nside*2, nside=nside, new=True, fwhm= fwhm * numpy.pi / 10800., pixwin=True ,
@@ -87,13 +90,12 @@ def ReturnNoiseMap(noise, nside, beam, fwhm):
 
 
 
-def ReturnMapWithNoiseCov(maskname , anoise, fwhm, nside, r,fgfac , nfac,
+def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac , nfac,
              freqs, noises,fwhm_list, dust_model, synch_model, param_defs,uni = False, isdust=True, 
         issynch =True,
           re_noise = False, re_cmb = False, dust_template = None, synch_template= None, 
           fixTd = False, fgnoise_fac = None, seed = 1
              ):
-    print('Deltamap03')
     mvec= []
     mask= healpy.read_map( maskname, field=(0), verbose=False, dtype = numpy.float64)
     mask = healpy.ud_grade(mask,nside_out=nside)
@@ -112,34 +114,16 @@ def ReturnMapWithNoiseCov(maskname , anoise, fwhm, nside, r,fgfac , nfac,
     if isdust and uni:
       piv_mbb1 = float(dust_model.evalf(subs={'nu':402}) )
   
-    noise_template = './inputs/noise_nu{0}GHz_ns{1:04d}_{2}amin_fwhm{3:d}_beam{4}_{5:04d}.fits'
-    anoise_freq_template = './inputs/anoise_nu{0}GHz_ns{1:04d}_{2:04d}.npy'
-    cmb_template = './inputs/cmb_ns{0:04d}_fwhm{1:d}_r{2}_{3:04d}.fits'
-    anoise_template = './inputs/anoise_ns{0:04d}_{1}amin_{2:04d}.npy'
+    input_dir = map_parser.get('simpar', 'input_dir')
+    if not os.path.exists(input_dir):
+      os.mkdir(input_dir)
+    noise_template = input_dir + map_parser.get('simpar', 'noise_name')
+    anoise_freq_template = input_dir + map_parser.get('simpar', 'anoise_freq_name')
+    anoise_template = input_dir + map_parser.get('simpar', 'anoise_name')
+    cmb_template = input_dir + map_parser.get('simpar', 'cmb_name')
 
-    if 4 == nside:                
-        if synch_template is None:
-            synchmapname = './PySM/output02_ns4/test002_nu{0}GHz_synchrotron_nside0004.fits'
-        else:
-            synchmapname = synch_template
-        if dust_template is None:
-            if fixTd: 
-                dustmapname = './PySM/output02_ns4/TdFix_nu{0}GHz_dust_nside0004.fits'
-            else:
-                dustmapname = './PySM/output02_ns4/test002_nu{0}GHz_dust_nside0004.fits'
-        else:
-            dustmapname = dust_template
-    elif 16==nside:
-        synchmapname = './PySM/output_ns16_r0/test002_nu{0}GHz_synchrotron_nside0016.fits'
-        if fixTd: 
-            dustmapname = './PySM/output_ns16_r0/TdFix_nu{0}GHz_dust_nside0016.fits'
-        else:
-            dustmapname = './PySM/output_ns16_r0/test002_nu{0}GHz_dust_nside0016.fits'
-    else:
-        synchmapname = synch_template
-        if fixTd: 
-          return 1
-        dustmapname = dust_template
+    synchmapname = synch_template
+    dustmapname = dust_template
 
     nonzero_len =len(  mask[mask != 0.0] )*2
    
@@ -163,12 +147,12 @@ def ReturnMapWithNoiseCov(maskname , anoise, fwhm, nside, r,fgfac , nfac,
 
    
     nu_str = '{0:07.2f}'.format(402.0).replace('.','p')
-    dustmap = healpy.read_map( dustmapname.format(nu_str) , field=(0,1,2), verbose=False, dtype = numpy.float64)
+    dustmap = healpy.read_map( dustmapname.format( nu = nu_str) , field=(0,1,2), verbose=False, dtype = numpy.float64)
     alm = healpy.map2alm( dustmap, lmax=nside*2, pol=True)
 
     dustmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
     nu_str = '{0:07.2f}'.format(40.0).replace('.','p')
-    synchmap = healpy.read_map( synchmapname.format(nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
+    synchmap = healpy.read_map( synchmapname.format(nu = nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
     alm = healpy.map2alm( synchmap, lmax=nside*2, pol=True)
     synchmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
     for nu,noise,beam in zip( freqs, noises, fwhm_list ):
@@ -184,11 +168,11 @@ def ReturnMapWithNoiseCov(maskname , anoise, fwhm, nside, r,fgfac , nfac,
             if issynch:
                 fgmap += synchmap * fac_synch/piv_synch
         else:
-            dustmap = healpy.read_map( dustmapname.format(nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
+            dustmap = healpy.read_map( dustmapname.format(nu = nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
             alm = healpy.map2alm( dustmap, lmax=nside*2, pol=True)
             dustmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
 
-            synchmap = healpy.read_map( synchmapname.format(nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
+            synchmap = healpy.read_map( synchmapname.format(nu = nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
             alm = healpy.map2alm( synchmap, lmax=nside*2, pol=True)
             synchmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
             if isdust:
@@ -241,14 +225,13 @@ def ReturnMapWithNoiseCov(maskname , anoise, fwhm, nside, r,fgfac , nfac,
 
 
 
-def TestFGWithNoiseCov(freq_list, n_list, fwhm_list,nside=4, fwhm=2200., 
+def TestFGWithNoiseCov(freq_list, n_list, fwhm_list, maskname, map_parser, nside=4, fwhm=2200., 
                            isdust = True, issynch = True, r = 1.0e-3, anoise = 2.0e-2,
                        param_defs ={'beta_s':-3.0, 'beta_d':1.5, 'T_d1':20.9}, 
                         dust_template =None, synch_template= None,
                        uni =False, fixTd = False, fixbetad = False, fgnoise_fac = None,
                            fgfac = 1.0, dmp = None, T_d1_mean = 20, beta_d_mean = 1.5, seed = 1, re_noise= False, re_cmb = False, isdust_map = None, issynch_map = None,
     ):
-    maskname= './mask_p06_Nside4.v2.fits'
     anoise = anoise
     fgfac = fgfac
     nfac =1 
@@ -266,7 +249,7 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list,nside=4, fwhm=2200.,
       isdust_map = isdust
     if issynch_map is None:
       issynch_map = issynch
-    mvec = ReturnMapWithNoiseCov( maskname, anoise, fwhm, nside , r,
+    mvec = ReturnMapWithNoiseCov( map_parser, maskname, anoise, fwhm, nside , r,
                      fgfac, nfac, freq_list, n_list, fwhm_list, mbb1, synch, param_defs,uni = uni, 
                      issynch = issynch_map, isdust = isdust_map,
                      re_noise = re_noise, re_cmb = re_cmb, dust_template = dust_template, 
@@ -297,7 +280,6 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list,nside=4, fwhm=2200.,
     S0_BSM = cov.ReturnCovMatrix(False)
 
     asigma = ReturnNoiseSigma(anoise, nside)
-    #aNoise_Cov = numpy.eye( S0_SM.shape[0] )*pow(asigma,2)
     aNoise_Cov = numpy.eye( S0_SM.shape[0] )*pow(asigma,2)
     dmp.SetS0(S0_SM + aNoise_Cov, S0_BSM)
     dmp.SetFgDmatrix(dmt)
@@ -345,14 +327,13 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list,nside=4, fwhm=2200.,
     return dmp
 
 
-def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list,nside=4, fwhm=2200., 
+def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list, maskname, map_parser, nside=4, fwhm=2200., 
                            isdust = True, issynch = True, r = 1.0e-3, anoise = 2.0e-2,
                        param_defs ={'beta_s':-3.0, 'beta_d':1.5, 'x^R':0.81}, 
                         dust_template =None, synch_template= None,
                        uni =False, fixTd = False, fixbetad = False, fgnoise_fac = None,
                            fgfac = 1.0, dmp = None, T_d1_mean = 20, beta_d_mean = 1.5, seed = 1, re_noise = False, re_cmb = False, isdust_map = None, issynch_map = None,
     ):
-    maskname= './mask_p06_Nside4.v2.fits'
     anoise = anoise
     fgfac = fgfac
     nfac =1 
@@ -369,7 +350,7 @@ def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list,nside=4, fwhm=2200.,
       isdust_map = isdust
     if issynch_map is None:
       issynch_map = issynch
-    mvec = ReturnMapWithNoiseCov( maskname, anoise, fwhm, nside , r,
+    mvec = ReturnMapWithNoiseCov( map_parser, maskname, anoise, fwhm, nside , r,
                      fgfac, nfac, freq_list, n_list, fwhm_list, mbb1, synch, param_defs,uni = uni, 
                      issynch = issynch_map, isdust = isdust_map,
                      re_noise = re_noise, re_cmb = re_cmb, dust_template = dust_template, 
@@ -464,27 +445,19 @@ def main():
 
   nu_list = numpy.array([float(i) for i in map_parser.get('par','nu').split()])
   fwhm_list = numpy.array([float(i) for i in map_parser.get('par','fwhm').split()])
-  alpha_list = numpy.array([float(i) for i in map_parser.get('par','alpha').split()])
   noise_list = numpy.array([float(i) for i in map_parser.get('par','noise').split()])
-  nside = 4
-  fwhm_norm = 2200
-  try:
-    nside = fit_parser.getint('par', 'nside') 
-  except:
-    pass
-  if nside !=4:
-    fwhm_norm = 2200 * pow(4./nside,2)
-  try:
-    dust_template = fit_parser.get('par','dust_temp')
-    synch_template = fit_parser.get('par','sync_temp')
-  except:
-    dust_template = './PySM/output_pysm3_ns4_02/test001_nu{0}GHz_dust_nside0004.fits'
-    synch_template = './PySM/output_pysm3_ns4_02/test001_nu{0}GHz_synchrotron_nside0004.fits'
-  print('nside ', nside)
-  print('dust_template ', dust_template)
+  nside = fit_parser.getint('par', 'nside') 
 
+  fwhm_norm = 2200.
+  if nside !=4:
+    fwhm_norm = 2200. * pow(4./nside,2)
+  
+  dust_template = fit_parser.get('par','dust_temp').format_map( SafeDict(nside = nside) )
+  synch_template = fit_parser.get('par','synch_temp').format_map( SafeDict(nside = nside) )
+  """Change to  your own PySM dir"""
   dust_beta_d = healpy.read_map('/gpfs/group/cmb/litebird/usr/yminami/workdir/ForeGround/PySM/template/dust_beta.fits', field = (0), verbose=False, dtype = numpy.float64)
   dust_Td1 = healpy.read_map('/gpfs/group/cmb/litebird/usr/yminami/workdir/ForeGround/PySM/template/dust_temp.fits', field = (0), verbose=False, dtype = numpy.float64)
+
 
   nu_list_fit = numpy.array([float(i) for i in fit_parser.get('par','nu').split()])
 
@@ -511,22 +484,23 @@ def main():
   fwhm_comb = fwhm_list[numpy.isin( nu_list, temp_freqs )]
 
 
-  odir = './results4paper/{0}/'
-  oname = 'num{0:04d}.npy'
-  oname_r = 'num{0:04d}_r.npy'
+  odir = fit_parser.get('par', 'odir')
+  oname = fit_parser.get('par', 'oname')
   odir = odir.format( (args.fitconfig).replace('.ini', '').rsplit('/',1)[-1] )
-  #chekc directory
+  #check directory
   if not os.path.isdir(odir):
     os.makedirs( odir )
   oname = odir + oname.format(args.seed)
   if os.path.exists(oname):
     return 0
 
+  maskname = map_parser.get('simpar', 'maskname')
+
   dmp = None
 
   results = []
   if not 'x^R' in fit_params:
-    dmp = TestFGWithNoiseCov(temp_freqs, noise_comb, fwhm_comb, nside= nside, fwhm = fwhm_norm, 
+    dmp = TestFGWithNoiseCov(temp_freqs, noise_comb, fwhm_comb, maskname, map_parser,nside= nside, fwhm = fwhm_norm, 
       isdust = fit_parser.getboolean('par','isdust'), issynch = fit_parser.getboolean('par', 'issynch'),
       r = fit_parser.getfloat('par','r'),
       uni = fit_parser.getboolean('par', 'uni'),
@@ -541,7 +515,7 @@ def main():
       seed =  args.seed 
       )
   else:
-    dmp = TestFGWithNoiseCovXRef(temp_freqs, noise_comb, fwhm_comb, nside= nside, fwhm = fwhm_norm, 
+    dmp = TestFGWithNoiseCovXRef(temp_freqs, noise_comb, fwhm_comb, maskname, map_parser, nside= nside, fwhm = fwhm_norm, 
       isdust = fit_parser.getboolean('par','isdust'), issynch = fit_parser.getboolean('par', 'issynch'),
       r = fit_parser.getfloat('par','r'),
       uni = fit_parser.getboolean('par', 'uni'),
@@ -580,7 +554,6 @@ def main():
   except:
     xRsigma = 3.0
 
-  maskname= './mask_p06_Nside4.v2.fits'
   if withTdPrior:
     mask_map = healpy.read_map(maskname, field=(0), verbose = False, nest = False, dtype = numpy.float64)
     mask_map = healpy.ud_grade(mask_map, nside_out = nside)
@@ -646,8 +619,7 @@ def main():
       for idx,param in enumerate(dmp.params):
         dmp.param_values[param.name] = dmp.m.params[idx].value
         dmp.param_errors[param.name] = dmp.m.params[idx].error
-      #dmp.r_minos = [ dmp.m.params[0].merror]
-      dmp.lh =  dmp.m.fmin.fval
+        dmp.lh =  dmp.m.fmin.fval
       print(dmp.param_values)
       n_iter += 1
 

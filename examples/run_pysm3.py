@@ -21,33 +21,26 @@ def main():
   nu = np.array([float(i) for i in parser.get('par','nu').split()])
   fwhm =np.array([float(i) for i in parser.get('par','fwhm').split()]) 
   noise =np.array([float(i) for i in parser.get('par','noise').split()]) 
-  # Nside = parser.getint('par','nside')
-  Nside = 16
+  Nside = parser.getint('par','nside')
 
+  ofdir = parser.get('fgpar', 'fg_dir').format(Nside)
+  if not  os.path.exists( ofdir ):
+    os.mkdir(ofdir)
 
-  ofdir ='./output_pysm3_ns{0:d}_02/'.format(Nside)
   nu_template = 'nu{0:07.2f}GHz'
-  ofname_template = ofdir + 'test001_{0}_{1}_nside{2:04d}.fits'
-  comp_names = ['dust','synchrotron']
-  #comp_names = ['d4','synchrotron']
-  #Get Dust
-  sky =  pysm.Sky(nside = Nside, preset_strings = ["d1"], output_unit = "uK_CMB")
-  #sky =  pysm.Sky(nside = Nside, preset_strings = ["d4"], output_unit = "uK_CMB")
-  for nu_i in nu:
-    nu_name = nu_template.format(nu_i).replace('.','p')
-    ofname = ofname_template.format( nu_name, comp_names[0] ,Nside)
-    if os.path.exists(ofname):
-      continue
-    hp.write_map(ofname, sky.get_emission( nu_i *u.GHz  ), nest =False )
 
+  ofname_template = ofdir + parser.get('fgpar', 'fg_name')
 
-  sky =  pysm.Sky(nside = Nside, preset_strings = ["s1"], output_unit = "uK_CMB")
-  for nu_i in nu:
-    nu_name = nu_template.format(nu_i).replace('.','p')
-    ofname = ofname_template.format( nu_name, comp_names[1] ,Nside)
-    if os.path.exists(ofname):
-      continue
-    hp.write_map(ofname, sky.get_emission( nu_i *u.GHz  ), nest =False )
+  comp_names = parser.get('fgpar','components' ).split()
+  
+  for comp in comp_names:
+    sky = pysm.Sky(nside = Nside, preset_strings = [ comp ], output_unit = "uK_CMB")
+    for nu_i in nu:
+      nu_name = nu_template.format(nu_i).replace('.','p')
+      ofname = ofname_template.format(nu_name, comp, Nside)
+      if os.path.exists(ofname):
+        continue
+      hp.write_map(ofname, sky.get_emission( nu_i *u.GHz  ), nest =False )
   return 0
 if __name__ == '__main__':
   sys.exit(main())

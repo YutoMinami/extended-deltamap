@@ -99,7 +99,7 @@ def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac ,
              freqs, noises,fwhm_list, dust_model, synch_model, param_defs,uni = False, isdust=True, 
         issynch =True,
           re_noise = False, re_cmb = False, dust_template = None, synch_template= None, 
-          fixTd = False, fgnoise_fac = None, seed = 1
+          fixTd = False, fgnoise_fac = None, seed = 1, input_dir = None
              ):
     mvec= []
     mask= healpy.read_map( maskname, field=(0), dtype = numpy.float64)
@@ -119,13 +119,12 @@ def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac ,
     if isdust and uni:
       piv_mbb1 = float(dust_model.evalf(subs={'nu':402}) )
   
-    input_dir = map_parser.get('simpar', 'input_dir')
-    if not os.path.exists(input_dir):
-      os.mkdir(input_dir)
-    noise_template = input_dir + map_parser.get('simpar', 'noise_name')
-    anoise_freq_template = input_dir + map_parser.get('simpar', 'anoise_freq_name')
-    anoise_template = input_dir + map_parser.get('simpar', 'anoise_name')
-    cmb_template = input_dir + map_parser.get('simpar', 'cmb_name')
+    input_dir_path = Path(input_dir if input_dir is not None else map_parser.get('simpar', 'input_dir'))
+    input_dir_path.mkdir(parents=True, exist_ok=True)
+    noise_template = str(input_dir_path / map_parser.get('simpar', 'noise_name'))
+    anoise_freq_template = str(input_dir_path / map_parser.get('simpar', 'anoise_freq_name'))
+    anoise_template = str(input_dir_path / map_parser.get('simpar', 'anoise_name'))
+    cmb_template = str(input_dir_path / map_parser.get('simpar', 'cmb_name'))
 
     synchmapname = synch_template
     dustmapname = dust_template
@@ -236,6 +235,7 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list, maskname, map_parser, nside
                         dust_template =None, synch_template= None,
                        uni =False, fixTd = False, fixbetad = False, fgnoise_fac = None,
                            fgfac = 1.0, dmp = None, T_d1_mean = 20, beta_d_mean = 1.5, seed = 1, re_noise= False, re_cmb = False, isdust_map = None, issynch_map = None,
+                       input_dir = None,
     ):
     anoise = anoise
     fgfac = fgfac
@@ -258,7 +258,8 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list, maskname, map_parser, nside
                      fgfac, nfac, freq_list, n_list, fwhm_list, mbb1, synch, param_defs,uni = uni, 
                      issynch = issynch_map, isdust = isdust_map,
                      re_noise = re_noise, re_cmb = re_cmb, dust_template = dust_template, 
-                    synch_template=synch_template, fgnoise_fac = fgnoise_fac, seed = seed
+                    synch_template=synch_template, fgnoise_fac = fgnoise_fac, seed = seed,
+                    input_dir = input_dir,
                     )
     if dmp is not None:
       dmp.SetMvec(mvec)
@@ -338,6 +339,7 @@ def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list, maskname, map_parser, n
                         dust_template =None, synch_template= None,
                        uni =False, fixTd = False, fixbetad = False, fgnoise_fac = None,
                            fgfac = 1.0, dmp = None, T_d1_mean = 20, beta_d_mean = 1.5, seed = 1, re_noise = False, re_cmb = False, isdust_map = None, issynch_map = None,
+                       input_dir = None,
     ):
     anoise = anoise
     fgfac = fgfac
@@ -359,7 +361,8 @@ def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list, maskname, map_parser, n
                      fgfac, nfac, freq_list, n_list, fwhm_list, mbb1, synch, param_defs,uni = uni, 
                      issynch = issynch_map, isdust = isdust_map,
                      re_noise = re_noise, re_cmb = re_cmb, dust_template = dust_template, 
-                    synch_template = synch_template, fgnoise_fac = fgnoise_fac, seed = seed
+                    synch_template = synch_template, fgnoise_fac = fgnoise_fac, seed = seed,
+                    input_dir = input_dir,
                     )
 
     if dmp is not None:
@@ -470,6 +473,8 @@ def main():
     raise FileNotFoundError(
       "Set DELTAMAP_DUST_BETA_MAP and DELTAMAP_DUST_TEMP_MAP to external template FITS files."
     )
+  dust_beta_path = str(Path(dust_beta_path).expanduser().resolve())
+  dust_temp_path = str(Path(dust_temp_path).expanduser().resolve())
   dust_beta_d = healpy.read_map(dust_beta_path, field = (0), dtype = numpy.float64)
   dust_Td1 = healpy.read_map(dust_temp_path, field = (0), dtype = numpy.float64)
 
@@ -499,14 +504,11 @@ def main():
   fwhm_comb = fwhm_list[numpy.isin( nu_list, temp_freqs )]
 
 
-  odir = ResolvePath(fitconfig_dir, fit_parser.get('par', 'odir'))
-  oname = fit_parser.get('par', 'oname')
-  odir = odir.format(fitconfig_path.stem)
-  #check directory
-  if not os.path.isdir(odir):
-    os.makedirs( odir )
-  oname = odir + oname.format(args.seed)
-  if os.path.exists(oname):
+  input_dir = ResolvePath(config_dir, map_parser.get('simpar', 'input_dir'))
+  odir = Path(ResolvePath(fitconfig_dir, fit_parser.get('par', 'odir').format(fitconfig_path.stem)))
+  oname = odir / fit_parser.get('par', 'oname').format(args.seed)
+  odir.mkdir(parents=True, exist_ok=True)
+  if oname.exists():
     return 0
 
   maskname = ResolvePath(config_dir, map_parser.get('simpar', 'maskname'))
@@ -527,7 +529,8 @@ def main():
       fixTd = fit_parser.getboolean('par','fixTd'),
       dmp = dmp,
       T_d1_mean = dust_Td1.mean(),  beta_d_mean = dust_beta_d.mean(),
-      seed =  args.seed 
+      seed =  args.seed,
+      input_dir = input_dir,
       )
   else:
     dmp = TestFGWithNoiseCovXRef(temp_freqs, noise_comb, fwhm_comb, maskname, map_parser, nside= nside, fwhm = fwhm_norm, 
@@ -542,7 +545,8 @@ def main():
       fixTd = fit_parser.getboolean('par','fixTd'),
       dmp = dmp,
       T_d1_mean = dust_Td1.mean(),  beta_d_mean = dust_beta_d.mean(),
-      seed =  args.seed 
+      seed =  args.seed,
+      input_dir = input_dir,
       )
 
   dmp.SetParameters(values= params)

@@ -200,15 +200,19 @@ def ReturnMapWithNoiseCov(
         print("read old cmb map")
         cmbmap = healpy.read_map(cmb_writename, field=[0, 1, 2], dtype=numpy.float64)
 
-    nu_str = "{0:07.2f}".format(402.0).replace(".", "p")
+    smoothing_fwhm = fwhm * numpy.pi / 10800.0
+    dust_ref_nu = "{0:07.2f}".format(402.0).replace(".", "p")
+    synch_ref_nu = "{0:07.2f}".format(40.0).replace(".", "p")
+
+    nu_str = dust_ref_nu
     dustmap = healpy.read_map(dustmapname.format(nu=nu_str), field=(0, 1, 2), dtype=numpy.float64)
     alm = healpy.map2alm(dustmap, lmax=nside * 2, pol=True)
 
-    dustmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=fwhm * numpy.pi / 10800.0)
-    nu_str = "{0:07.2f}".format(40.0).replace(".", "p")
+    dustmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=smoothing_fwhm)
+    nu_str = synch_ref_nu
     synchmap = healpy.read_map(synchmapname.format(nu=nu_str), field=(0, 1, 2), dtype=numpy.float64)
     alm = healpy.map2alm(synchmap, lmax=nside * 2, pol=True)
-    synchmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=fwhm * numpy.pi / 10800.0)
+    synchmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=smoothing_fwhm)
     for nu, noise, beam in zip(freqs, noises, fwhm_list):
         # print(nu,noise)
         fgmap = numpy.zeros_like(cmbmap)
@@ -226,11 +230,11 @@ def ReturnMapWithNoiseCov(
         else:
             dustmap = healpy.read_map(dustmapname.format(nu=nu_str), field=(0, 1, 2), dtype=numpy.float64)
             alm = healpy.map2alm(dustmap, lmax=nside * 2, pol=True)
-            dustmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=fwhm * numpy.pi / 10800.0)
+            dustmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=smoothing_fwhm)
 
             synchmap = healpy.read_map(synchmapname.format(nu=nu_str), field=(0, 1, 2), dtype=numpy.float64)
             alm = healpy.map2alm(synchmap, lmax=nside * 2, pol=True)
-            synchmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=fwhm * numpy.pi / 10800.0)
+            synchmap = healpy.alm2map(alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=smoothing_fwhm)
             if isdust:
                 fgmap += dustmap
             if issynch:

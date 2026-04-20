@@ -13,8 +13,21 @@ except AttributeError:
 
 
 class Covariance:
+    """Build pixel-space Q/U covariance matrices from CMB spectra."""
+
     def __init__(self, nside=4, lmax=None, maskname=None, pixwin=True, fwhm=None, verbose=0):
-        """ """
+        """Initialize a covariance workspace for one HEALPix resolution.
+
+        Args:
+            nside: Target HEALPix nside.
+            lmax: Maximum multipole to include. Defaults to ``2 * nside`` and is
+                capped at ``4 * nside - 1``.
+            maskname: Optional mask FITS path used to restrict valid pixels.
+            pixwin: Whether pixel-window corrections are enabled in covariance
+                calculations.
+            fwhm: Optional beam smoothing width in arcminutes.
+            verbose: Verbosity level for debug output.
+        """
         self.nside = nside
         self.npix = healpy.nside2npix(nside)
         if lmax is None:
@@ -43,6 +56,7 @@ class Covariance:
         self.Xarray = None
 
     def return_bell(self, ell, fwhm):
+        """Return the spin-2 Gaussian beam transfer function."""
         s = 2.0
         sigma_b = (fwhm * numpy.pi / 10800.0) / numpy.sqrt(8.0 * numpy.log(2))
         return numpy.exp(-(ell * (ell + 1) - s**2) * pow(sigma_b, 2) / 2)
@@ -62,6 +76,7 @@ class Covariance:
         self.m_indices = numpy.arange(len(self.angles))
 
     def Initialise(self):
+        """Prepare pixel indices, angular grids, spectra, and basis arrays."""
         self.CreateUnmaskedIndices()
         self.CreateAngles()
         self.SetCl()
@@ -71,6 +86,12 @@ class Covariance:
         self.CalcWandXarray()
 
     def SetClFiles(self, lensedcl, tensorcl):
+        """Override the bundled scalar and tensor spectrum files.
+
+        Args:
+            lensedcl: Scalar or lensed CMB spectrum file.
+            tensorcl: Tensor CMB spectrum file.
+        """
         self.cl_scalar_file = lensedcl
         self.cl_tensor_file = tensorcl
 
@@ -265,6 +286,16 @@ class Covariance:
 
     # read_cls
     def read_cell(self, cl_s_name, nside, is_scalar=True):
+        """Load a power-spectrum table and apply HEALPix pixel windows.
+
+        Args:
+            cl_s_name: Input power-spectrum filename.
+            nside: HEALPix nside used for the pixel window function.
+            is_scalar: Whether the input uses the scalar-spectrum column layout.
+
+        Returns:
+            Spectrum arrays suitable for covariance projection.
+        """
         cl_s = numpy.loadtxt(cl_s_name)
         if len(cl_s[0]) in (4, 6) and is_scalar:
             cl_s = numpy.c_[cl_s[:, :3], numpy.zeros(len(cl_s))[:, numpy.newaxis], cl_s[:, 3]]
@@ -279,6 +310,7 @@ class Covariance:
         return cl
 
     def SetCl(self):
+        """Load the configured scalar and tensor spectra into memory."""
         self.cl_scalar = self.read_cell(self.cl_scalar_file, self.nside, True)
         self.cl_tensor = self.read_cell(self.cl_tensor_file, self.nside, False)
 
@@ -490,6 +522,11 @@ class Covariance:
         # self.QU = sympy.Matrix( self.QU )
 
     def CalcCov02(self, Cl):
+        """Compute Q/U covariance blocks from spectra using vectorized sums.
+
+        Args:
+            Cl: Spectrum arrays containing at least EE and BB components.
+        """
         self.QQ = numpy.zeros(shape=(self.size, self.size), dtype="float64")
         self.UU = numpy.zeros(shape=(self.size, self.size), dtype="float64")
         self.QU = numpy.zeros(shape=(self.size, self.size), dtype="float64")
@@ -526,6 +563,15 @@ class Covariance:
         # self.QU = self.QU + numpy.conjugate(self.QU.T) - numpy.diag(self.QU.diagonal())
 
     def ReturnCovMatrix(self, scalar=True):
+        """Return the full block covariance matrix for scalar or tensor spectra.
+
+        Args:
+            scalar: Whether to use the scalar spectrum. When false, the tensor
+                spectrum is used instead.
+
+        Returns:
+            A block matrix with QQ, QU, UQ, and UU covariance blocks.
+        """
         if scalar:
             self.CalcCov02(self.cl_scalar)
             # self.CalcCov(self.cl_scalar)

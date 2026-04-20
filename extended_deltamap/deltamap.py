@@ -1047,6 +1047,7 @@ class DeltaMap:
         return -pow(self.Delta, 2) * (self.AI_NIm.T @ scipy.linalg.cho_solve((self.BL, True), self.AI_NIm))[0, 0]
 
     def ReturnSN(self):
+        """Return the log-determinant of the combined signal-plus-noise matrix."""
         S = numpy.kron(numpy.ones((self.N_array.shape[0], self.N_array.shape[0])), self.S0_CMB)
         N = numpy.diag(self.N_array)
         N = numpy.kron(N, numpy.eye(self.size))
@@ -1067,10 +1068,12 @@ class DeltaMap:
         return 2 * det
 
     def ReturnlnC(self):
+        """Return the log-determinant contribution of the effective C matrix."""
         sgn, ldet = numpy.linalg.slogdet(self.A - self.S0_CMB_I - self.Delta * numpy.identity(self.size))
         return self.ReturnlnS0() + self.ReturnlnB() - sgn * ldet
 
     def ReturnlnS(self):
+        """Return the log-determinant of the scalar signal plus combined noise term."""
         ##combine all the noise
         n_comb = 0.0
         for noise in self.N_inv_array:
@@ -1096,6 +1099,7 @@ class DeltaMap:
 		"""
 
     def ReturnlnAI(self):
+        """Return the log-determinant contribution from the inverse A matrix."""
         """
         sign,det =numpy.linalg.slogdet(self.ALU)
         return - sign*det
@@ -1119,10 +1123,12 @@ class DeltaMap:
         # return sign*det*self.size
 
     def ReturnlnDT_SpNI_D(self):
+        """Return the log-determinant of the ``D^T (S+N)^{-1} D`` term."""
         sign, det = numpy.linalg.slogdet(self.DT_SpNI_DL)
         return 2 * det
 
     def ReturnxRTerm(self):
+        """Return the quadratic prior penalty for the ``x^R`` parameter."""
         xR = self.meanxR
         for param in self.params:
             if "x^R" in param.name:
@@ -1130,6 +1136,7 @@ class DeltaMap:
         return pow((xR - self.meanxR) / self.sigmaxR, 2)
 
     def ReturnTdTerm(self):
+        """Return the quadratic prior penalty for the dust temperature."""
         Td = self.meanTd
         for param in self.params:
             if "T_d1" in param.name:
@@ -1137,6 +1144,12 @@ class DeltaMap:
         return pow((Td - self.meanTd) / self.sigmaTd, 2)
 
     def ReturnChiSquare(self):
+        """Evaluate the chi-square-like data term for the current parameters.
+
+        Returns:
+            A large fallback value when intermediate matrix calculations fail,
+            otherwise the current chi-square contribution including enabled priors.
+        """
         self.valid = self.CalcInOneLoop()
         if not self.valid:
             return numpy.finfo(numpy.float64).max * 1.0e-3

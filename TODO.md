@@ -19,6 +19,8 @@
 ## Code cleanup
 - Refactor `examples/TestDeltamap.py` into smaller functions or a package CLI module; it is currently the operational entry point and still mixes I/O, simulation, fitting, and environment-specific assumptions.
 - Replace broad `except:` blocks in the example scripts with targeted exceptions.
+- Continue exception cleanup by replacing ad-hoc `print()` diagnostics with structured errors or logging where failures need operator context.
+- Factor repeated config reads and prior-loading branches in `examples/TestDeltamap.py` into helpers so exception handling can stay local and explicit.
 - Standardize naming and style across the codebase. The current code mixes research-script naming, inconsistent indentation, and package-style imports.
 - Audit old commented-out blocks in `extended_deltamap/deltamap.py` and `extended_deltamap/covariance.py`; remove dead code where it no longer serves as research context.
 

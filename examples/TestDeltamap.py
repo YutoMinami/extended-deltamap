@@ -388,18 +388,17 @@ def TestFGWithNoiseCov(
     dmp.SetS0(S0_SM + aNoise_Cov, S0_BSM)
     dmp.SetFgDmatrix(dmt)
 
-    # noise = numpy.array(n_list)
-    # sigma = ReturnNoiseSigma(noise, nside)
-
+    base_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(asigma, 2)
     Noise_list = []
     for nu, noi, beam in zip(freq_list, n_list, fwhm_list):
         noise_cov = ReturnNoiseCov(noi, nside, beam, cov, pixwin=True)
         if fgnoise_fac is None:
-            Noise_list.append(noise_cov + numpy.eye(S0_SM.shape[0]) * pow(asigma, 2))
+            noise_total = noise_cov + base_noise_diag
         else:
             noise_sigma_freq = ReturnNoiseSigma(noi / fgnoise_fac, nside)
-            Noise_list.append(noise_cov + numpy.eye(S0_SM.shape[0]) * pow(noise_sigma_freq, 2))
-    # dmp.SetNoiseArray( sigma**2 )
+            freq_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(noise_sigma_freq, 2)
+            noise_total = noise_cov + freq_noise_diag
+        Noise_list.append(noise_total)
     dmp.SetNoiseList(Noise_list)
     dmp.SetMvec(mvec)
     dmp.initialise()

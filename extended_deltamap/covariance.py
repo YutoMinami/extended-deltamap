@@ -42,7 +42,7 @@ class Covariance:
         self.Warray = None
         self.Xarray = None
 
-    def ReturnBell(self, ell, fwhm):
+    def return_bell(self, ell, fwhm):
         s = 2.0
         sigma_b = (fwhm * numpy.pi / 10800.0) / numpy.sqrt(8.0 * numpy.log(2))
         return numpy.exp(-(ell * (ell + 1) - s**2) * pow(sigma_b, 2) / 2)
@@ -264,9 +264,9 @@ class Covariance:
         # self.Xi =self.ReturnXi(self.m_indices)
 
     # read_cls
-    def ReadCell(self, cl_s_name, nside, isScalar=True):
+    def read_cell(self, cl_s_name, nside, is_scalar=True):
         cl_s = numpy.loadtxt(cl_s_name)
-        if len(cl_s[0]) in (4, 6) and isScalar:
+        if len(cl_s[0]) in (4, 6) and is_scalar:
             cl_s = numpy.c_[cl_s[:, :3], numpy.zeros(len(cl_s))[:, numpy.newaxis], cl_s[:, 3]]
         cls, ls = cl_s.T[1:5], cl_s.T[0]
         cl = cls * 2.0 * numpy.pi / (ls * (ls + 1.0))
@@ -279,8 +279,8 @@ class Covariance:
         return cl
 
     def SetCl(self):
-        self.cl_scalar = self.ReadCell(self.cl_scalar_file, self.nside, True)
-        self.cl_tensor = self.ReadCell(self.cl_tensor_file, self.nside, False)
+        self.cl_scalar = self.read_cell(self.cl_scalar_file, self.nside, True)
+        self.cl_tensor = self.read_cell(self.cl_tensor_file, self.nside, False)
 
     def ReturnEllSum(self, YY):
         YYl = numpy.zeros((YY.shape[0], YY.shape[1], self.lmax - self.lmin + 1), dtype=numpy.complex128)
@@ -365,7 +365,7 @@ class Covariance:
         ell = numpy.arange(2, self.lmax + 1)
         pw_l = numpy.ones(len(ell))
         if self.fwhm is not None:
-            pw_l = self.ReturnBell(ell, self.fwhm)
+            pw_l = self.return_bell(ell, self.fwhm)
 
         WWl = numpy.zeros(shape=(self.size, self.size, self.lmax - self.lmin + 1), dtype="float64")
         XXl = numpy.zeros(shape=(self.size, self.size, self.lmax - self.lmin + 1), dtype="float64")
@@ -409,7 +409,7 @@ class Covariance:
 		ell = numpy.arange(2, self.lmax+1 )
 		pw_l = numpy.ones(len(ell))
 		if not self.fwhm is None:
-			pw_l = self.ReturnBell(ell, self.fwhm)
+			pw_l = self.return_bell(ell, self.fwhm)
 
 		WWl = numpy.zeros( shape=(self.size, self.size, self.lmax-self.lmin+1),dtype='float64' )
 		XXl = numpy.zeros( shape=(self.size, self.size, self.lmax-self.lmin+1),dtype='float64' )
@@ -455,7 +455,7 @@ class Covariance:
         if self.pixwin:
             pw_l = healpy.pixwin(self.nside, pol=True, lmax=self.lmax)[1][2:]
         if self.fwhm is not None:
-            pw_l = self.ReturnBell(ell, self.fwhm)
+            pw_l = self.return_bell(ell, self.fwhm)
             # healpy.pixwin(self.nside , pol=True, lmax=self.lmax)[1][2:]
 
         for i in range(self.size):
@@ -498,7 +498,7 @@ class Covariance:
         pw_l = numpy.ones(len(ell))
 
         if self.fwhm is not None:
-            pw_l = self.ReturnBell(ell, self.fwhm)
+            pw_l = self.return_bell(ell, self.fwhm)
 
         for i in range(self.size):
             WW = numpy.einsum("i...,j...->ij...", self.Warray[i : i + 1, :], numpy.conjugate(self.Warray[i:, :]))

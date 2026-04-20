@@ -58,11 +58,11 @@ def ReturnNoiseSigma(noise: float, nside: int) -> float:
 
 def ReturnCMBMap(r: float, nside: int, fwhm: float) -> FloatArray:
     data_dir = importlib.resources.files("extended_deltamap").joinpath("files")
-    Cl_s = ReadCell(data_dir / "test_lensedcls_49T7H5WT3X.dat", nside, True)
-    Cl_t = ReadCell(data_dir / "test_tenscls_49T7H5WT3X.dat", nside, False)
-    minlen = min(len(Cl_s[1]), len(Cl_t[1]))
+    cl_scalar = ReadCell(data_dir / "test_lensedcls_49T7H5WT3X.dat", nside, True)
+    cl_tensor = ReadCell(data_dir / "test_tenscls_49T7H5WT3X.dat", nside, False)
+    minlen = min(len(cl_scalar[1]), len(cl_tensor[1]))
     cmbmap = healpy.synfast(
-        Cl_s[:, :minlen] + Cl_t[:, :minlen] * r,
+        cl_scalar[:, :minlen] + cl_tensor[:, :minlen] * r,
         lmax=nside * 2,
         nside=nside,
         new=True,
@@ -88,13 +88,13 @@ def ReturnNoiseCov(
     ell = numpy.arange(0, nside * 2 + 1, 1)
     bl_nominal = ReturnBell(ell, beam)
     pw = healpy.pixwin(lmax=nside * 2, nside=nside, pol=True)[1]
-    Cell = numpy.zeros((6, nside * 2 + 1))
+    cell = numpy.zeros((6, nside * 2 + 1))
     noise_level = pow(noi * numpy.pi / 10800.0, 2)
     if pixwin:
         bl_nominal[pw != 0] /= pw[pw != 0]
-    Cell[1] = numpy.full((1, nside * 2 + 1), noise_level) * pow(1.0 / bl_nominal, 2)
-    Cell[2] = numpy.full((1, nside * 2 + 1), noise_level) * pow(1.0 / bl_nominal, 2)
-    cov.CalcCov02(Cell[:, 2:])
+    cell[1] = numpy.full((1, nside * 2 + 1), noise_level) * pow(1.0 / bl_nominal, 2)
+    cell[2] = numpy.full((1, nside * 2 + 1), noise_level) * pow(1.0 / bl_nominal, 2)
+    cov.CalcCov02(cell[:, 2:])
     noise_cov = numpy.block([[cov.QQ, cov.QU], [cov.QU.T, cov.UU]])
     return noise_cov
 
@@ -380,26 +380,26 @@ def TestFGWithNoiseCov(
     cov = Covariance(nside=nside, maskname=maskname, verbose=False, pixwin=True, lmax=nside * 2, fwhm=fwhm)
     cov.Initialise()
 
-    S0_SM = cov.ReturnCovMatrix(True)
-    S0_BSM = cov.ReturnCovMatrix(False)
+    s0_sm = cov.ReturnCovMatrix(True)
+    s0_bsm = cov.ReturnCovMatrix(False)
 
     asigma = ReturnNoiseSigma(anoise, nside)
-    aNoise_Cov = numpy.eye(S0_SM.shape[0]) * pow(asigma, 2)
-    dmp.SetS0(S0_SM + aNoise_Cov, S0_BSM)
+    a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
+    dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
     dmp.SetFgDmatrix(dmt)
 
-    base_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(asigma, 2)
-    Noise_list = []
+    base_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
+    noise_list = []
     for nu, noi, beam in zip(freq_list, n_list, fwhm_list):
         noise_cov = ReturnNoiseCov(noi, nside, beam, cov, pixwin=True)
         if fgnoise_fac is None:
             noise_total = noise_cov + base_noise_diag
         else:
             noise_sigma_freq = ReturnNoiseSigma(noi / fgnoise_fac, nside)
-            freq_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(noise_sigma_freq, 2)
+            freq_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(noise_sigma_freq, 2)
             noise_total = noise_cov + freq_noise_diag
-        Noise_list.append(noise_total)
-    dmp.SetNoiseList(Noise_list)
+        noise_list.append(noise_total)
+    dmp.SetNoiseList(noise_list)
     dmp.SetMvec(mvec)
     dmp.initialise()
     initial_params: dict[str, list[float | tuple[float, float]]]
@@ -520,26 +520,26 @@ def TestFGWithNoiseCovXRef(
     cov = Covariance(nside=nside, maskname=maskname, verbose=False, pixwin=True, lmax=nside * 2, fwhm=fwhm)
     cov.Initialise()
 
-    S0_SM = cov.ReturnCovMatrix(True)
-    S0_BSM = cov.ReturnCovMatrix(False)
+    s0_sm = cov.ReturnCovMatrix(True)
+    s0_bsm = cov.ReturnCovMatrix(False)
     asigma = ReturnNoiseSigma(anoise, nside)
-    # aNoise_Cov = numpy.eye( S0_SM.shape[0] )*pow(asigma,2)
-    aNoise_Cov = numpy.eye(S0_SM.shape[0]) * pow(asigma, 2)
-    dmp.SetS0(S0_SM + aNoise_Cov, S0_BSM)
+    # a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
+    a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
+    dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
     dmp.SetFgDmatrix(dmt)
 
-    base_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(asigma, 2)
-    Noise_list = []
+    base_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
+    noise_list = []
     for nu, noi, beam in zip(freq_list, n_list, fwhm_list):
         noise_cov = ReturnNoiseCov(noi, nside, beam, cov, pixwin=True)
         if fgnoise_fac is None:
             noise_total = noise_cov + base_noise_diag
         else:
             noise_sigma_freq = ReturnNoiseSigma(noi / fgnoise_fac, nside)
-            freq_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(noise_sigma_freq, 2)
+            freq_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(noise_sigma_freq, 2)
             noise_total = noise_cov + freq_noise_diag
-        Noise_list.append(noise_total)
-    dmp.SetNoiseList(Noise_list)
+        noise_list.append(noise_total)
+    dmp.SetNoiseList(noise_list)
     dmp.SetMvec(mvec)
     dmp.initialise()
     initial_params: dict[str, list[float | tuple[float, float]]]
@@ -610,12 +610,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     dust_beta_path = str(Path(dust_beta_path).expanduser().resolve())
     dust_temp_path = str(Path(dust_temp_path).expanduser().resolve())
     dust_beta_d = healpy.read_map(dust_beta_path, field=(0), dtype=numpy.float64)
-    dust_Td1 = healpy.read_map(dust_temp_path, field=(0), dtype=numpy.float64)
+    dust_td1 = healpy.read_map(dust_temp_path, field=(0), dtype=numpy.float64)
 
     nu_list_fit = numpy.array([float(i) for i in fit_parser.get("par", "nu").split()])
 
     dust_beta_d = healpy.ud_grade(map_in=dust_beta_d, nside_out=nside, order_in="RING", order_out="RING")
-    dust_Td1 = healpy.ud_grade(map_in=dust_Td1, nside_out=nside, order_in="RING", order_out="RING")
+    dust_td1 = healpy.ud_grade(map_in=dust_td1, nside_out=nside, order_in="RING", order_out="RING")
 
     temp_freqs = nu_list_fit
     temp_noise = noise_list
@@ -672,7 +672,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             fgnoise_fac=fgnoise_fac,
             fixTd=fit_parser.getboolean("par", "fixTd"),
             dmp=dmp,
-            T_d1_mean=dust_Td1.mean(),
+            T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),
             seed=args.seed,
             input_dir=input_dir,
@@ -697,7 +697,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             fgnoise_fac=fgnoise_fac,
             fixTd=fit_parser.getboolean("par", "fixTd"),
             dmp=dmp,
-            T_d1_mean=dust_Td1.mean(),
+            T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),
             seed=args.seed,
             input_dir=input_dir,
@@ -706,15 +706,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     dmp.SetParameters(values=params)
 
     withTdPrior = False
-    Tdsigma = None
+    td_sigma = None
     try:
         withTdPrior = fit_parser.getboolean("par", "Tdprior")
     except:
         pass
     try:
-        Tdsigma = fit_parser.getfloat("par", "Tdsigma")
+        td_sigma = fit_parser.getfloat("par", "Tdsigma")
     except:
-        Tdsigma = 3.0
+        td_sigma = 3.0
     withxRPrior = False
     xRsigma = None
     try:
@@ -731,19 +731,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         mask_map = healpy.read_map(maskname, field=(0), nest=False, dtype=numpy.float64)
         mask_map = healpy.ud_grade(mask_map, nside_out=nside)
         dmp.withTdPrior = withTdPrior
-        dmp.SetTdPrior(dust_Td1[mask_map == 1].mean(), dust_Td1[mask_map == 1].std() * Tdsigma)
+        dmp.SetTdPrior(dust_td1[mask_map == 1].mean(), dust_td1[mask_map == 1].std() * td_sigma)
     if withxRPrior:
         mask_map = healpy.read_map(maskname, field=(0), nest=False, dtype=numpy.float64)
         mask_map = healpy.ud_grade(mask_map, nside_out=nside)
         dmp.withxRPrior = withxRPrior
         nuRef = 353.0
-        xRmean = constants.h * nuRef * 1.0e9 / (constants.k * dust_Td1[mask_map == 1].mean())
+        xRmean = constants.h * nuRef * 1.0e9 / (constants.k * dust_td1[mask_map == 1].mean())
         xRstd = (
             constants.h
             * nuRef
             * 1.0e9
-            / (constants.k * pow(dust_Td1[mask_map == 1].mean(), 2))
-            * dust_Td1[mask_map == 1].std()
+            / (constants.k * pow(dust_td1[mask_map == 1].mean(), 2))
+            * dust_td1[mask_map == 1].std()
         )
         print("xR +/- = {0:.2f} +/- {1:.2f}".format(xRmean, xRstd))
         dmp.SetxRPrior(xRmean, xRstd * xRsigma)

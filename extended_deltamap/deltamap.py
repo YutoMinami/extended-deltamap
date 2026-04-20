@@ -468,6 +468,7 @@ class DeltaMap:
             # print('inv equals ? : ', tmp_S0_CMB_I.equals( self.S0_CMB_I ) )
 
     def CalcA(self):
+        """Assemble the effective signal-plus-noise matrix ``A`` and its factorization."""
         self.A = None
         # self.A = self.S0_CMB_I
         ##if numpy array case
@@ -493,6 +494,7 @@ class DeltaMap:
             self.valid = False
 
     def CalcH_matrix(self):
+        """Build block matrix terms used when full noise covariances are provided."""
         D = self.dmtrx.D_matrix
         for param in self.params:
             # self.D = self.D.subs(param, value)
@@ -544,18 +546,23 @@ class DeltaMap:
         self.DTNIM = numpy.block(matrix_list)
 
     def CalcDTNID_I_DTNIM(self):
+        """Solve the projected normal equations for the mean-vector term."""
         self.DTNID_I_DTNIM = scipy.linalg.cho_solve((self.DNIDL, True), self.DTNIM)
 
     def CalcDcTNID_DTNID_I_DTNIM(self):
+        """Project the solved mean-vector term back to pixel space."""
         self.DcTNID_DTNID_I_DTNIM = self.DTNIDc.T @ self.DTNID_I_DTNIM
 
     def CalcBIDcTNID_DTNID_I_DTNIM(self):
+        """Apply the inverse ``B`` operator to the projected mean-vector term."""
         self.BIDcTNID_DTNID_I_DTNIM = scipy.linalg.cho_solve((self.BL, True), self.DcTNID_DTNID_I_DTNIM)
 
     def CalcDelta(self):
+        """Compute the scalar or matrix-valued ``Delta`` term from projected noise blocks."""
         self.Delta = self.DTNIDc.T @ scipy.linalg.cho_solve((self.DNIDL, True), self.DTNIDc)
 
     def CalcH(self):
+        """Construct the H operator for the diagonal-noise approximation."""
         """
         self.D =None
         self.D = self.dmtrx.D_matrix
@@ -683,6 +690,7 @@ class DeltaMap:
         pass
 
     def CalcHm(self):
+        """Accumulate the H-weighted data vector."""
         self.Hm = None
 
         ## with numpy array
@@ -701,6 +709,7 @@ class DeltaMap:
         pass
 
     def CalcHM(self):
+        """Accumulate the H-weighted mean-subtracted data vector."""
         self.HM = None
 
         for H_i, mvec_i in zip(self.H.sum(axis=0), self.meanvec):
@@ -715,6 +724,7 @@ class DeltaMap:
             print("HM: " + str(self.HM))
 
     def CalcB(self):
+        """Assemble the ``B`` matrix and its factorizations for later solves."""
         self.B = None
         self.BLU = None
         self.BP = None
@@ -755,6 +765,7 @@ class DeltaMap:
         pass
 
     def CalcAI_NIm(self):
+        """Solve for ``A^{-1} N^{-1} m`` using the current ``A`` factorization."""
         self.AI_NIm = None
         if self.verbose:
             pretime = time.time()
@@ -793,6 +804,15 @@ class DeltaMap:
 		"""
 
     def OrthogonalComplement(self, x, threshold=1e-15):
+        """Return an orthonormal basis for the orthogonal complement of ``x``.
+
+        Args:
+            x: Input matrix whose column space defines the constrained subspace.
+            threshold: Singular-value threshold used to determine the rank.
+
+        Returns:
+            A matrix whose columns span the orthogonal complement.
+        """
         r, c = x.shape
         if c < r:
             import warnings
@@ -809,6 +829,7 @@ class DeltaMap:
         return oc.T
 
     def CalcTmpVec(self):
+        """Project input maps onto the orthogonal complement of the D matrix."""
         D = self.dmtrx.D_matrix
         for param in self.params:
             D = D.subs(param, self.param_values[param.name])
@@ -818,10 +839,12 @@ class DeltaMap:
         self.tmpmvec = [oc_i * mvec_i for mvec_i, oc_i in zip(self.mvec, oc_sum)]
 
     def CalcMeanVec(self):
+        """Store mean-subtracted data vectors for each frequency channel."""
         self.meanvec = [mvec_i - self.AI_NIm for mvec_i in self.mvec]
         # self.meanvec = [ mvec_i - self.AI_NIm for mvec_i in self.tmpmvec]
 
     def ReturnMHM(self):
+        """Return the quadratic form built from the projected mean vectors."""
         if self.is_noise_matrix:
             return -(self.DTNIM.T @ self.DTNID_I_DTNIM)[0, 0]
         else:
@@ -842,6 +865,7 @@ class DeltaMap:
             return -MHM[0, 0]
 
     def ReturnMHBIHM(self):
+        """Return the correction term involving ``B^{-1}`` and projected means."""
         if self.is_noise_matrix:
             return -(self.DcTNID_DTNID_I_DTNIM.T @ self.BIDcTNID_DTNID_I_DTNIM)[0, 0]
         else:
@@ -885,6 +909,7 @@ class DeltaMap:
 	"""
 
     def ReturnmNm(self):
+        """Return the raw data quadratic form ``m^T N^{-1} m``."""
         mNm = None
         if self.is_noise_matrix:
             for ni_i, mvec_i in zip(self.NI_list, self.mvec):
@@ -902,6 +927,7 @@ class DeltaMap:
         return mNm[0, 0]
 
     def ReturnmHm(self):
+        """Return the quadratic form of the data vector under the H operator."""
         mHm = None
         if self.verbose:
             pretime = time.time()
@@ -937,6 +963,7 @@ class DeltaMap:
         return -1.0 * mHm[0, 0]
 
     def ReturnmNIAINIm(self):
+        """Return the quadratic form ``-m^T N^{-1} A^{-1} N^{-1} m``."""
         # return (-self.NIm.T * self.AI_NIm)[0,0].evalf()
         # return (-self.NIm.T @  self.AI_NIm)[0,0].evalf()
         # TODO
@@ -945,6 +972,7 @@ class DeltaMap:
         return (-self.NIm.T @ self.AI_NIm)[0, 0]
 
     def ReturnmHAINIm(self):
+        """Return the mixed H and ``A^{-1}N^{-1}m`` cross term."""
         # return (2.*self.Hm.T * self.AI_NIm)[0,0].evalf()
         # return (2.*self.Hm.T @ self.AI_NIm)[0,0].evalf()
         # return 2.*(self.Hm.T @ self.AI_NIm)[0,0]
@@ -983,6 +1011,7 @@ class DeltaMap:
 	"""
 
     def ReturnmHBIHm(self):
+        """Return the H-weighted quadratic correction through ``B^{-1}``."""
         # return (self.Hm.T @ scipy.linalg.cho_solve( self.BL, self.Hm)[0,0].evalf()
         # return (self.Hm.T @ scipy.linalg.lu_solve( (self.BLU, self.BP ),self.Hm) )[0,0]
         # return self.Delta*(self.Hm.T @ scipy.linalg.lu_solve(  (self.BpDLU, self.BpDP ), self.Hm) )[0,0]
@@ -996,6 +1025,7 @@ class DeltaMap:
         return -(self.Hm.T @ scipy.linalg.cho_solve((self.BL, True), (self.Hm)))[0, 0]
 
     def ReturnDmHBIAINIm(self):
+        """Return the mixed ``Delta``, H, B, and ``A^{-1}N^{-1}m`` correction term."""
         # return (-2.*self.Delta*self.Hm.T * self.B.cholesky_solve(
         """
         return (-2.*self.Delta*self.Hm.T * self.B.LUsolve(
@@ -1026,6 +1056,7 @@ class DeltaMap:
         )
 
     def ReturnDmNIAIAINIm(self):
+        """Return the ``Delta``-scaled quadratic term in ``A^{-1}N^{-1}m``."""
 
         # TODO MODIFIED
         # return -1./self.Delta * ( (self.Delta *self.AI_NIm).T @ (self.Delta *self.AI_NIm) )[0,0]
@@ -1033,6 +1064,7 @@ class DeltaMap:
         # return -1.* ( self.AI_NIm.T @ (self.Delta *self.AI_NIm) )[0,0]
 
     def ReturnD2mNIAIBIAINIm(self):
+        """Return the second-order ``Delta`` correction through ``B^{-1}``."""
         # return pow(self.Delta,1) * (self.AI_NIm.T @ scipy.linalg.lu_solve((self.BpDLU, self.BpDP), self.BpD@self.AI_NIm) )[0,0]
         # return pow(self.Delta,2) * (self.AI_NIm.T @ scipy.linalg.lu_solve((self.BLU, self.BP), self.B@self.AI_NIm) )[0,0]
         # return  (self.AI_NIm.T @ (self.Delta* scipy.linalg.lu_solve((self.BpDLU, self.BpDP), self.AI_NIm) ) )[0,0]

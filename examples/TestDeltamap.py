@@ -434,6 +434,41 @@ def test_fg_with_noise_cov(
     issynch_map: bool | None = None,
     input_dir: str | None = None,
 ) -> DeltaMap:
+    """Prepare a DeltaMap fit using the standard dust-temperature parameterization.
+
+    Args:
+        freq_list: Fitting frequencies in GHz.
+        n_list: Per-frequency noise levels in uK-arcmin.
+        fwhm_list: Per-frequency beam widths in arcminutes.
+        maskname: Mask FITS path used to select valid pixels.
+        map_parser: Simulation config parser.
+        nside: HEALPix nside for simulation and fitting.
+        fwhm: Common smoothing width in arcminutes.
+        isdust: Whether the fit model includes dust.
+        issynch: Whether the fit model includes synchrotron.
+        r: Tensor-to-scalar ratio used for the simulated CMB signal.
+        anoise: Shared additional noise level in uK-arcmin.
+        param_defs: Fixed foreground parameter values substituted into the model.
+        dust_template: Dust template filename pattern.
+        synch_template: Synchrotron template filename pattern.
+        uni: Whether to reuse scaled reference templates across frequencies.
+        fixTd: Whether to fix the dust temperature during fitting.
+        fixbetad: Whether to fix the dust spectral index during fitting.
+        fgnoise_fac: Optional rescaling for fitting-frequency additional noise.
+        fgfac: Overall foreground amplitude multiplier for simulations.
+        dmp: Existing DeltaMap instance to reuse.
+        T_d1_mean: Mean dust temperature used when ``fixTd`` is enabled.
+        beta_d_mean: Mean dust spectral index used when ``fixbetad`` is enabled.
+        seed: Seed suffix used in cached simulation products.
+        re_noise: Whether to regenerate cached noise realizations.
+        re_cmb: Whether to regenerate the cached CMB realization.
+        isdust_map: Optional override for including dust in the simulated maps.
+        issynch_map: Optional override for including synchrotron in the simulated maps.
+        input_dir: Optional override for the cached input directory.
+
+    Returns:
+        An initialized ``DeltaMap`` instance ready for minimization.
+    """
     nfac = 1
 
     tmpl = Templates()
@@ -573,6 +608,41 @@ def test_fg_with_noise_cov_xref(
     issynch_map: bool | None = None,
     input_dir: str | None = None,
 ) -> DeltaMap:
+    """Prepare a DeltaMap fit using the ``x^R`` dust parameterization.
+
+    Args:
+        freq_list: Fitting frequencies in GHz.
+        n_list: Per-frequency noise levels in uK-arcmin.
+        fwhm_list: Per-frequency beam widths in arcminutes.
+        maskname: Mask FITS path used to select valid pixels.
+        map_parser: Simulation config parser.
+        nside: HEALPix nside for simulation and fitting.
+        fwhm: Common smoothing width in arcminutes.
+        isdust: Whether the fit model includes dust.
+        issynch: Whether the fit model includes synchrotron.
+        r: Tensor-to-scalar ratio used for the simulated CMB signal.
+        anoise: Shared additional noise level in uK-arcmin.
+        param_defs: Fixed foreground parameter values substituted into the model.
+        dust_template: Dust template filename pattern.
+        synch_template: Synchrotron template filename pattern.
+        uni: Whether to reuse scaled reference templates across frequencies.
+        fixTd: Whether to fix the dust temperature prior through ``x^R``.
+        fixbetad: Whether to fix the dust spectral index during fitting.
+        fgnoise_fac: Optional rescaling for fitting-frequency additional noise.
+        fgfac: Overall foreground amplitude multiplier for simulations.
+        dmp: Existing DeltaMap instance to reuse.
+        T_d1_mean: Mean dust temperature used when ``fixTd`` is enabled.
+        beta_d_mean: Mean dust spectral index used when ``fixbetad`` is enabled.
+        seed: Seed suffix used in cached simulation products.
+        re_noise: Whether to regenerate cached noise realizations.
+        re_cmb: Whether to regenerate the cached CMB realization.
+        isdust_map: Optional override for including dust in the simulated maps.
+        issynch_map: Optional override for including synchrotron in the simulated maps.
+        input_dir: Optional override for the cached input directory.
+
+    Returns:
+        An initialized ``DeltaMap`` instance ready for minimization.
+    """
     nfac = 1
     nu_ref = 353.0
 
@@ -684,6 +754,14 @@ def test_fg_with_noise_cov_xref(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the example DeltaMap fit workflow from configuration files.
+
+    Args:
+        argv: Command-line style arguments. When omitted, ``sys.argv`` is used.
+
+    Returns:
+        Zero when the fit completes or the output already exists.
+    """
     parser = argparse.ArgumentParser(description="Run the DeltaMap fitting example")
     parser.add_argument("config", help="simulation config file", default="./LTD_config+M0.ini")
     parser.add_argument("fitconfig", help="fit config file", default="./configs/Dust_var_M5_4freq.ini")

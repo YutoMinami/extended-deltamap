@@ -1265,6 +1265,16 @@ class DeltaMap:
         return self.param_values, self.param_errors
 
     def ReturnMinimize(self, isfit_r=True, isonly_r=False):
+        """Run one Minuit optimization step for the requested parameter subset.
+
+        Args:
+            isfit_r: Whether the tensor-to-scalar ratio ``r`` should be varied.
+            isonly_r: Whether only ``r`` should be varied while foreground
+                parameters stay fixed.
+
+        Returns:
+            A tuple of the Minuit fit summary and per-parameter value/error pairs.
+        """
         parameter_initial = []
         limits = []
         err_params = []
@@ -1378,6 +1388,14 @@ class DeltaMap:
 		"""
 
     def MinimizeOnlyR(self, params):
+        """Objective wrapper for optimizing only the ``r`` parameter.
+
+        Args:
+            params: Minuit parameter vector containing only ``r``.
+
+        Returns:
+            The current likelihood value.
+        """
         for idx, param in enumerate(self.params):
             if "r" not in param.name:
                 pass
@@ -1387,6 +1405,14 @@ class DeltaMap:
         return self.ReturnLikelihood()
 
     def MinimizeWithoutR(self, params):
+        """Objective wrapper for optimizing foreground parameters with fixed ``r``.
+
+        Args:
+            params: Minuit parameter vector excluding ``r``.
+
+        Returns:
+            The current chi-square value with ``r`` held fixed.
+        """
         count = 0
         ##TODO##
         for idx, param in enumerate(self.params):
@@ -1402,19 +1428,48 @@ class DeltaMap:
         return self.ReturnChiSquare()
 
     def MinimizeWithR(self, params):
+        """Objective wrapper for optimizing all active parameters together.
+
+        Args:
+            params: Minuit parameter vector for the full active parameter set.
+
+        Returns:
+            The current likelihood value.
+        """
         for idx, param in enumerate(self.params):
             self.param_values[param.name] = params[idx]
         # print(self.params, self.param_values[param.name])
         return self.ReturnLikelihood()
 
     def ReturnLikelihoodValue(self, values):
+        """Evaluate the likelihood after temporarily updating named parameters.
+
+        Args:
+            values: Mapping of parameter names to trial values.
+
+        Returns:
+            The likelihood value for the supplied parameter point.
+        """
         self.SetParameters(values)
         return self.ReturnLikelihood()
 
     def ReturnLikelihoods(self, param_lists):
+        """Vectorize likelihood evaluation over multiple parameter dictionaries.
+
+        Args:
+            param_lists: Iterable of parameter mappings.
+
+        Returns:
+            A list of likelihood values in the same order as the inputs.
+        """
         return [self.ReturnLikelihoodValue(param) for param in param_lists]
 
     def CalcInOneLoop(self):
+        """Run the full internal matrix update for the current parameter state.
+
+        Returns:
+            ``True`` when all intermediate calculations succeed, otherwise ``False``.
+        """
         self.valid = True
         # self.CalcTmpVec()
         # self.CalcNIm()#TODO

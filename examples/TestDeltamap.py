@@ -1,22 +1,27 @@
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
+import importlib.resources
+import sys
+from pathlib import Path
 import numpy
 import healpy
 import scipy
 import sympy
-import sys
-sys.path.append('../')
-import templates, dmatrix,deltamap,covariance
 import scipy.constants.constants as constants
 import configparser
 import argparse
 from iminuit import Minuit
+from extended_deltamap import Templates, DMatrix, DeltaMap, Covariance
 
 from copy import deepcopy
 from collections import defaultdict
+
 class SafeDict(dict):
   def __missing__(self, key):
     return '{' + key + '}'
+
+def ResolvePath(base_dir, path_text):
+    return str((base_dir / path_text).resolve())
 
 def ReadCell(cl_s_name, nside , isScalar = True):
     cl_s = numpy.loadtxt(cl_s_name)
@@ -40,12 +45,12 @@ def ReturnNoiseSigma(noise ,nside,):
     return sigma
 
 def ReturnCMBMap(r, nside, fwhm):
-    Cl_s = ReadCell('../files/test_lensedcls_49T7H5WT3X.dat', nside, True)
-    Cl_t = ReadCell('../files/test_tenscls_49T7H5WT3X.dat', nside, False)
+    data_dir = importlib.resources.files("extended_deltamap").joinpath("files")
+    Cl_s = ReadCell(data_dir / 'test_lensedcls_49T7H5WT3X.dat', nside, True)
+    Cl_t = ReadCell(data_dir / 'test_tenscls_49T7H5WT3X.dat', nside, False)
     minlen= min( len(Cl_s[1]) , len(Cl_t[1]))
     cmbmap = healpy.synfast(
         Cl_s[:,:minlen] + Cl_t[:,:minlen] * r, lmax=nside*2, nside=nside, new=True, fwhm= fwhm * numpy.pi / 10800., pixwin=True ,
-         verbose=False
     )
     return cmbmap
 
@@ -84,7 +89,7 @@ def ReturnNoiseMap(noise, nside, beam, fwhm):
     
     alm = healpy.map2alm(tmp_noise, lmax= nside*2, pol=True)
     
-    noise_map = healpy.alm2map(alm,  nside = nside, lmax=nside*2,  pixwin=True, verbose=False,
+    noise_map = healpy.alm2map(alm,  nside = nside, lmax=nside*2,  pixwin=True,
                    fwhm = fwhm*numpy.sqrt(1- pow(beam/fwhm,2) )*numpy.pi/ 10800. )[1:]
     return noise_map
 
@@ -97,7 +102,7 @@ def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac ,
           fixTd = False, fgnoise_fac = None, seed = 1
              ):
     mvec= []
-    mask= healpy.read_map( maskname, field=(0), verbose=False, dtype = numpy.float64)
+    mask= healpy.read_map( maskname, field=(0), dtype = numpy.float64)
     mask = healpy.ud_grade(mask,nside_out=nside)
    
     params = dust_model.free_symbols
@@ -143,18 +148,18 @@ def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac ,
           healpy.write_map(cmb_writename, cmbmap, nest =False)    
     else:
         print('read old cmb map')
-        cmbmap =  healpy.read_map(cmb_writename, field=[0,1,2], verbose = False, dtype = numpy.float64)
+        cmbmap =  healpy.read_map(cmb_writename, field=[0,1,2], dtype = numpy.float64)
 
    
     nu_str = '{0:07.2f}'.format(402.0).replace('.','p')
-    dustmap = healpy.read_map( dustmapname.format( nu = nu_str) , field=(0,1,2), verbose=False, dtype = numpy.float64)
+    dustmap = healpy.read_map( dustmapname.format( nu = nu_str) , field=(0,1,2), dtype = numpy.float64)
     alm = healpy.map2alm( dustmap, lmax=nside*2, pol=True)
 
-    dustmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
+    dustmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, fwhm=fwhm*numpy.pi/10800.)
     nu_str = '{0:07.2f}'.format(40.0).replace('.','p')
-    synchmap = healpy.read_map( synchmapname.format(nu = nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
+    synchmap = healpy.read_map( synchmapname.format(nu = nu_str), field=(0,1,2), dtype = numpy.float64)
     alm = healpy.map2alm( synchmap, lmax=nside*2, pol=True)
-    synchmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
+    synchmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, fwhm=fwhm*numpy.pi/10800.)
     for nu,noise,beam in zip( freqs, noises, fwhm_list ):
         #print(nu,noise)
         fgmap = numpy.zeros_like(cmbmap)    
@@ -168,13 +173,13 @@ def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac ,
             if issynch:
                 fgmap += synchmap * fac_synch/piv_synch
         else:
-            dustmap = healpy.read_map( dustmapname.format(nu = nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
+            dustmap = healpy.read_map( dustmapname.format(nu = nu_str), field=(0,1,2), dtype = numpy.float64)
             alm = healpy.map2alm( dustmap, lmax=nside*2, pol=True)
-            dustmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
+            dustmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, fwhm=fwhm*numpy.pi/10800.)
 
-            synchmap = healpy.read_map( synchmapname.format(nu = nu_str), field=(0,1,2), verbose=False, dtype = numpy.float64)
+            synchmap = healpy.read_map( synchmapname.format(nu = nu_str), field=(0,1,2), dtype = numpy.float64)
             alm = healpy.map2alm( synchmap, lmax=nside*2, pol=True)
-            synchmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, verbose=False, fwhm=fwhm*numpy.pi/10800.)
+            synchmap = healpy.alm2map(alm, nside=nside, lmax=nside*2, pixwin=True, fwhm=fwhm*numpy.pi/10800.)
             if isdust:
                 fgmap += dustmap
             if issynch:
@@ -189,7 +194,7 @@ def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac ,
             healpy.write_map( noisename, noise_map, nest = False) 
         else:
           print('read old noise map')
-          noise_map = healpy.read_map(noisename, field=[0,1], verbose = False, dtype = numpy.float64)
+          noise_map = healpy.read_map(noisename, field=[0,1], dtype = numpy.float64)
 
         inmap += noise_map * nfac
         mvec_each = numpy.concatenate([inmap[0][mask != 0.0],inmap[1][mask != 0.0]])
@@ -237,7 +242,7 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list, maskname, map_parser, nside
     nfac =1 
     nuRef = 353.0
 
-    tmpl = templates.Templates()
+    tmpl = Templates()
 
     mbb1 = tmpl.ReturnMBB1()
     synch = tmpl.ReturnPowerLawSynch()
@@ -260,20 +265,20 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list, maskname, map_parser, nside
       dmp.initialise()
       return dmp
 
-    dmt = dmatrix.DMatrix()
+    dmt = DMatrix()
     if isdust:
         dmt.AddD(mbb1)
     if issynch:
         dmt.AddD(synch)
 
-    dmp = deltamap.DeltaMap(verbose= False)
+    dmp = DeltaMap(verbose= False)
     dmt.SetFreqs( freq_list, [None]*len(freq_list) )
     if uni:
         dmt.PrepareUniformDMatrix()
     else:
         dmt.PrepareDMatrix()
 
-    cov = covariance.Covariance( nside= nside, maskname= maskname,verbose=False, pixwin=True , lmax=nside*2 , fwhm=fwhm )
+    cov = Covariance( nside= nside, maskname= maskname,verbose=False, pixwin=True , lmax=nside*2 , fwhm=fwhm )
     cov.Initialise()
 
     S0_SM = cov.ReturnCovMatrix(True)
@@ -339,7 +344,7 @@ def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list, maskname, map_parser, n
     nfac =1 
     nuRef = 353.0
 
-    tmpl = templates.Templates()
+    tmpl = Templates()
     mbb1 = tmpl.ReturnMBB1_xRef()
     synch = tmpl.ReturnPowerLawSynch()
     if fixTd:
@@ -362,20 +367,20 @@ def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list, maskname, map_parser, n
       dmp.initialise()
       return dmp
 
-    dmt = dmatrix.DMatrix()
+    dmt = DMatrix()
     if isdust:
         dmt.AddD(mbb1)
     if issynch:
         dmt.AddD(synch)
 
-    dmp = deltamap.DeltaMap(verbose= False)
+    dmp = DeltaMap(verbose= False)
     dmt.SetFreqs( freq_list, [None]*len(freq_list) )
     if uni:
         dmt.PrepareUniformDMatrix()
     else:
         dmt.PrepareDMatrix()
 
-    cov = covariance.Covariance( nside= nside, maskname= maskname,verbose=False, pixwin=True , lmax=nside*2 , fwhm=fwhm )
+    cov = Covariance( nside= nside, maskname= maskname,verbose=False, pixwin=True , lmax=nside*2 , fwhm=fwhm )
     cov.Initialise()
 
     S0_SM = cov.ReturnCovMatrix(True)
@@ -437,10 +442,15 @@ def main():
 
   args = parser.parse_args()
 
+  config_path = Path(args.config).resolve()
+  fitconfig_path = Path(args.fitconfig).resolve()
+  config_dir = config_path.parent
+  fitconfig_dir = fitconfig_path.parent
+
   map_parser = configparser.ConfigParser()
-  map_parser.read( args.config )
+  map_parser.read(config_path)
   fit_parser = configparser.ConfigParser()
-  fit_parser.read( args.fitconfig )
+  fit_parser.read(fitconfig_path)
   numpy.random.seed( args.seed )
 
   nu_list = numpy.array([float(i) for i in map_parser.get('par','nu').split()])
@@ -452,11 +462,16 @@ def main():
   if nside !=4:
     fwhm_norm = 2200. * pow(4./nside,2)
   
-  dust_template = fit_parser.get('par','dust_temp').format_map( SafeDict(nside = nside) )
-  synch_template = fit_parser.get('par','synch_temp').format_map( SafeDict(nside = nside) )
-  """Change to  your own PySM dir"""
-  dust_beta_d = healpy.read_map('/gpfs/group/cmb/litebird/usr/yminami/workdir/ForeGround/PySM/template/dust_beta.fits', field = (0), verbose=False, dtype = numpy.float64)
-  dust_Td1 = healpy.read_map('/gpfs/group/cmb/litebird/usr/yminami/workdir/ForeGround/PySM/template/dust_temp.fits', field = (0), verbose=False, dtype = numpy.float64)
+  dust_template = ResolvePath(fitconfig_dir, fit_parser.get('par','dust_temp').format_map(SafeDict(nside = nside)))
+  synch_template = ResolvePath(fitconfig_dir, fit_parser.get('par','synch_temp').format_map(SafeDict(nside = nside)))
+  dust_beta_path = os.environ.get("DELTAMAP_DUST_BETA_MAP")
+  dust_temp_path = os.environ.get("DELTAMAP_DUST_TEMP_MAP")
+  if dust_beta_path is None or dust_temp_path is None:
+    raise FileNotFoundError(
+      "Set DELTAMAP_DUST_BETA_MAP and DELTAMAP_DUST_TEMP_MAP to external template FITS files."
+    )
+  dust_beta_d = healpy.read_map(dust_beta_path, field = (0), dtype = numpy.float64)
+  dust_Td1 = healpy.read_map(dust_temp_path, field = (0), dtype = numpy.float64)
 
 
   nu_list_fit = numpy.array([float(i) for i in fit_parser.get('par','nu').split()])
@@ -484,9 +499,9 @@ def main():
   fwhm_comb = fwhm_list[numpy.isin( nu_list, temp_freqs )]
 
 
-  odir = fit_parser.get('par', 'odir')
+  odir = ResolvePath(fitconfig_dir, fit_parser.get('par', 'odir'))
   oname = fit_parser.get('par', 'oname')
-  odir = odir.format( (args.fitconfig).replace('.ini', '').rsplit('/',1)[-1] )
+  odir = odir.format(fitconfig_path.stem)
   #check directory
   if not os.path.isdir(odir):
     os.makedirs( odir )
@@ -494,7 +509,7 @@ def main():
   if os.path.exists(oname):
     return 0
 
-  maskname = map_parser.get('simpar', 'maskname')
+  maskname = ResolvePath(config_dir, map_parser.get('simpar', 'maskname'))
 
   dmp = None
 
@@ -555,18 +570,18 @@ def main():
     xRsigma = 3.0
 
   if withTdPrior:
-    mask_map = healpy.read_map(maskname, field=(0), verbose = False, nest = False, dtype = numpy.float64)
+    mask_map = healpy.read_map(maskname, field=(0), nest = False, dtype = numpy.float64)
     mask_map = healpy.ud_grade(mask_map, nside_out = nside)
     dmp.withTdPrior = withTdPrior
     dmp.SetTdPrior( dust_Td1[mask_map ==1].mean(), dust_Td1[mask_map ==1].std() * Tdsigma )
   if withxRPrior:
-    mask_map = healpy.read_map(maskname, field=(0), verbose = False, nest = False, dtype = numpy.float64)
+    mask_map = healpy.read_map(maskname, field=(0), nest = False, dtype = numpy.float64)
     mask_map = healpy.ud_grade(mask_map, nside_out = nside)
     dmp.withxRPrior = withxRPrior
     nuRef = 353.0
     xRmean = constants.h * nuRef * 1.0e9/( constants.k *  dust_Td1[mask_map ==1].mean() )
     xRstd = constants.h * nuRef * 1.0e9/( constants.k * pow(dust_Td1[mask_map ==1].mean(), 2 )  ) * dust_Td1[mask_map ==1].std()
-    print('xR \pm = {0:.2f} \pm {1:.2f}'.format(xRmean, xRstd))
+    print('xR +/- = {0:.2f} +/- {1:.2f}'.format(xRmean, xRstd))
     dmp.SetxRPrior( xRmean, xRstd * xRsigma )
 
   withmigrad = True

@@ -402,33 +402,29 @@ def TestFGWithNoiseCov(
     dmp.SetNoiseList(Noise_list)
     dmp.SetMvec(mvec)
     dmp.initialise()
+    initial_params: dict[str, list[float | tuple[float, float]]]
     if isdust and issynch:
         if "T_d1" not in param_defs.keys():
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10)], "beta_s": [-3.47, (-10.0, -0.01)]})
+            initial_params = {"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10)], "beta_s": [-3.47, (-10.0, -0.01)]}
         else:
-            dmp.SetParameterInitial(
-                {
-                    "r": [0.0, (0.0, 2.0)],
-                    "T_d1": [20.0, (5.0, 40.0)],
-                    "beta_d": [1.5, (0.1, 10)],
-                    "beta_s": [-3.47, (-10.0, -0.01)],
-                }
-            )
-    elif isdust:
-        if fixTd:
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10.0)]})
-        elif fixbetad:
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "T_d1": [20.0, (5.0, 40.0)]})
-        else:
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "T_d1": [20.0, (5.0, 40.0)], "beta_d": [1.5, (0.1, 10.0)]})
-
-    elif issynch:
-        dmp.SetParameterInitial(
-            {
+            initial_params = {
                 "r": [0.0, (0.0, 2.0)],
+                "T_d1": [20.0, (5.0, 40.0)],
+                "beta_d": [1.5, (0.1, 10)],
                 "beta_s": [-3.47, (-10.0, -0.01)],
             }
-        )
+    elif isdust:
+        if fixTd:
+            initial_params = {"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10.0)]}
+        elif fixbetad:
+            initial_params = {"r": [0.0, (0.0, 2.0)], "T_d1": [20.0, (5.0, 40.0)]}
+        else:
+            initial_params = {"r": [0.0, (0.0, 2.0)], "T_d1": [20.0, (5.0, 40.0)], "beta_d": [1.5, (0.1, 10.0)]}
+    elif issynch:
+        initial_params = {"r": [0.0, (0.0, 2.0)], "beta_s": [-3.47, (-10.0, -0.01)]}
+    else:
+        initial_params = {"r": [0.0, (0.0, 2.0)]}
+    dmp.SetParameterInitial(initial_params)
     return dmp
 
 

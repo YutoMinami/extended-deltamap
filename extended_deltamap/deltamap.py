@@ -115,7 +115,7 @@ class DeltaMap:
 
     def CheckFitParams(self):
         if self.S0_CMB_SM is None or self.S0_CMB_BSM is None or self.dmtrx is None:
-            raise Exception("Have to do SetSO() and SetFgDmatrix() before!")
+            raise RuntimeError("Call SetS0() and SetFgDmatrix() before checking fit parameters.")
         self.params = []
         # for param in self.S0_CMB.free_symbols:
         r = sympy.Symbol("r")
@@ -143,14 +143,14 @@ class DeltaMap:
 
     def CheckNoiseDim(self):
         if not self.is_noise_set:
-            raise Exception("Noise array or list of matrix is not set!")
+            raise RuntimeError("SetNoiseArray() or SetNoiseList() must be called before checking noise dimensions.")
         nfreq_dmatrix = self.dmtrx.D_matrix.shape[0]
         if self.is_noise_matrix:
             nfreq_noise = len(self.N_list)
         else:
             nfreq_noise = self.N_array.shape[0]
         if nfreq_noise != nfreq_dmatrix:
-            raise Exception("Number of frequencies from noise and dmatrix are different!")
+            raise ValueError("Noise inputs and the D matrix must have the same number of frequencies.")
         pass
 
     def CalcNInvArray(self):
@@ -169,7 +169,7 @@ class DeltaMap:
     # def SetParameterInitial(self, names, inits, limits=None):
     def SetParameterInitial(self, inits):
         if len(self.params) != len(inits):
-            raise Exception("The size of params and inits should be the same.")
+            raise ValueError("The number of initial parameter entries must match the fitted parameter list.")
         """
 		if limits is None:
 			limits = [] 

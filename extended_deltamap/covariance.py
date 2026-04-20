@@ -149,9 +149,9 @@ class Covariance:
 
     def ReturnWorX(self, ell, m, theta, phi, isW=True):
         if abs(m) > ell:
-            raise Exception("|m| should be <= ell")
+            raise ValueError("|m| must be less than or equal to ell.")
         if ell <= 1:
-            raise Exception("ell should be >= 2")
+            raise ValueError("ell must be greater than or equal to 2.")
         ell = numpy.float64(ell)
         m = numpy.float64(m)
         coeff = numpy.sqrt((2 * ell + 1) / 4 / numpy.pi) * numpy.exp(1.0j * m * phi)
@@ -164,9 +164,9 @@ class Covariance:
 
     def Return2Ylm(self, ell, m, theta, phi, plus=True):
         if abs(m) > ell:
-            raise Exception("|m| should be <= ell")
+            raise ValueError("|m| must be less than or equal to ell.")
         if ell <= 1:
-            raise Exception("ell should be >= 2")
+            raise ValueError("ell must be greater than or equal to 2.")
         ell = numpy.float64(ell)
         m = numpy.float64(m)
         alphalm = self.ReturnAlphalm(ell, m, theta, plus)

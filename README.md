@@ -5,35 +5,32 @@ and to estimate CMB parameter.
 
 
 ## enviroment
-- python>=3.7
+- Python 3.12
+- uv
 
 ## required packages
-- numpy
-- scipy 
-- sympy
-- healpy
-- astropy
-- iminuit
+- Managed via `uv sync`
 
 ## optional packages
-- pysm3
+- `uv sync --extra pysm`
 
 ## Explanation
-- deltamap.py: a class whcih can return $\chi^2$ and likelihood, and can minimise them
-- dmatrix.py: a class to deal with foreground $\tilde{D}$ matrix
-- covariance.py : a class to calculated pixel space covariance matrix from power spectra
-- templates.py: a class to deal with foreground models with sympy symbol
+- `extended_deltamap.deltamap`: a class whcih can return $\chi^2$ and likelihood, and can minimise them
+- `extended_deltamap.dmatrix`: a class to deal with foreground $\tilde{D}$ matrix
+- `extended_deltamap.covariance`: a class to calculated pixel space covariance matrix from power spectra
+- `extended_deltamap.templates`: a class to deal with foreground models with sympy symbol
 
 ## Usage
-Please see example/TestDeltamap.py to see how to fit cmb and fg parameters
+Please see `examples/TestDeltamap.py` to see how to fit cmb and fg parameters
 ## Example
 ### Preparation
-```
-cd example
-python run_pysm3.py LTD_config.ini
+```bash
+uv sync --extra pysm
+uv run python examples/run_pysm3.py examples/LTD_config.ini
 ```
 ### Test
+```bash
+export DELTAMAP_DUST_BETA_MAP=/path/to/dust_beta.fits
+export DELTAMAP_DUST_TEMP_MAP=/path/to/dust_temp.fits
+uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_r1e-2.ini 1
 ```
-python TestDeltamap.py LTD_config.ini Synch_var_3freq_r1e-2.ini 1
-```
-

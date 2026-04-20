@@ -1,5 +1,4 @@
 import sympy
-import dmatrix
 import scipy
 import numpy
 from iminuit import Minuit

@@ -125,6 +125,7 @@ class DeltaMap:
         self.dmtrx = dmtrx
 
     def DiffDmatrix(self):
+        """Differentiate the symbolic D matrix with respect to non-``r`` parameters."""
         self.DiffDs = []
         for param in self.params:
             if "r" in param.name:
@@ -302,12 +303,14 @@ class DeltaMap:
 	"""
 
     def ReturnMXCtXM(self):
+        """Return the tensor-mode quadratic form built from the projected mean vector."""
         second = self.HM + self.Delta * scipy.linalg.cho_solve((self.BL, True), self.HM)
         second = second - self.ni @ scipy.linalg.cho_solve((self.AL, True), self.HM)
         XM = -self.NIM + second
         return (XM.T @ self.S0_CMB_BSM @ XM)[0, 0]
 
     def ReturnTrace(self):
+        """Return the tensor-mode trace term used by derivative calculations."""
         tmp = self.ni @ self.S0_CMB_BSM
         return numpy.trace(tmp - self.ni @ scipy.linalg.cho_solve((self.AL, True), tmp))
 
@@ -1568,6 +1571,11 @@ class DeltaMap:
             return False
 
     def upper_triangular_to_symmetric(self, ut):
+        """Mirror an upper-triangular matrix into a full symmetric matrix.
+
+        Args:
+            ut: Matrix whose upper triangle already contains the desired values.
+        """
 
         n = ut.shape[0]
         try:

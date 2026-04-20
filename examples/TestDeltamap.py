@@ -89,10 +89,11 @@ def ReturnNoiseCov(
     bl_nominal = ReturnBell(ell, beam)
     pw = healpy.pixwin(lmax=nside * 2, nside=nside, pol=True)[1]
     Cell = numpy.zeros((6, nside * 2 + 1))
+    noise_level = pow(noi * numpy.pi / 10800.0, 2)
     if pixwin:
         bl_nominal[pw != 0] /= pw[pw != 0]
-    Cell[1] = numpy.full((1, nside * 2 + 1), pow(noi * numpy.pi / 10800.0, 2)) * pow(1.0 / bl_nominal, 2)
-    Cell[2] = numpy.full((1, nside * 2 + 1), pow(noi * numpy.pi / 10800.0, 2)) * pow(1.0 / bl_nominal, 2)
+    Cell[1] = numpy.full((1, nside * 2 + 1), noise_level) * pow(1.0 / bl_nominal, 2)
+    Cell[2] = numpy.full((1, nside * 2 + 1), noise_level) * pow(1.0 / bl_nominal, 2)
     cov.CalcCov02(Cell[:, 2:])
     noise_cov = numpy.block([[cov.QQ, cov.QU], [cov.QU.T, cov.UU]])
     return noise_cov
@@ -166,7 +167,8 @@ def ReturnMapWithNoiseCov(
     if isdust and uni:
         piv_mbb1 = float(dust_model.evalf(subs={"nu": 402}))
 
-    input_dir_path = Path(input_dir if input_dir is not None else map_parser.get("simpar", "input_dir"))
+    input_dir_value = input_dir if input_dir is not None else map_parser.get("simpar", "input_dir")
+    input_dir_path = Path(input_dir_value)
     input_dir_path.mkdir(parents=True, exist_ok=True)
     noise_template = str(input_dir_path / map_parser.get("simpar", "noise_name"))
     anoise_freq_template = str(input_dir_path / map_parser.get("simpar", "anoise_freq_name"))
@@ -178,7 +180,8 @@ def ReturnMapWithNoiseCov(
 
     nonzero_len = len(mask[mask != 0.0]) * 2
 
-    anoise_name = anoise_template.format(nside, "{0:.1e}".format(anoise).replace(".", "p"), seed)
+    anoise_scale = "{0:.1e}".format(anoise).replace(".", "p")
+    anoise_name = anoise_template.format(nside, anoise_scale, seed)
     if re_noise or not os.path.exists(anoise_name):
         random_anoise = ReturnANoiseMap(anoise, nside, nonzero_len)
         if not os.path.exists(anoise_name):
@@ -187,7 +190,8 @@ def ReturnMapWithNoiseCov(
         print("read old anoise map")
         random_anoise = numpy.load(anoise_name)
 
-    cmb_writename = cmb_template.format(nside, int(fwhm), "{0:.1e}".format(r).replace(".", "p"), seed)
+    r_scale = "{0:.1e}".format(r).replace(".", "p")
+    cmb_writename = cmb_template.format(nside, int(fwhm), r_scale, seed)
     if re_cmb or not os.path.exists(cmb_writename):
         cmbmap = ReturnCMBMap(r, nside, fwhm)
         if not os.path.exists(cmb_writename):

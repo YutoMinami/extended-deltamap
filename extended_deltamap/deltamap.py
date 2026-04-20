@@ -8,17 +8,13 @@ from scipy.linalg import lapack
 
 
 class DeltaMap:
-    """ """
+    """Fit CMB and foreground parameters with the DeltaMap formalism."""
 
     def __init__(self, verbose=False):
-        """
-        Parameters
-        ---------------------
-        hoge()
+        """Initialize an empty DeltaMap fitting workspace.
 
-        Returns
-        ----------------------
-        huga()
+        Args:
+            verbose: Whether to print detailed intermediate state during fitting.
         """
         self.verbose = verbose
         self.S0_CMB_SM = None
@@ -89,20 +85,43 @@ class DeltaMap:
         self.r_verbose = False
 
     def SetxRPrior(self, meanxR, sigmaxR):
+        """Store a Gaussian prior on the dust ``x^R`` parameter.
+
+        Args:
+            meanxR: Prior mean value.
+            sigmaxR: Prior standard deviation.
+        """
         self.meanxR = meanxR
         self.sigmaxR = sigmaxR
 
     def SetTdPrior(self, meanTd, sigmaTd):
+        """Store a Gaussian prior on the dust temperature.
+
+        Args:
+            meanTd: Prior mean dust temperature.
+            sigmaTd: Prior standard deviation for dust temperature.
+        """
         self.meanTd = meanTd
         self.sigmaTd = sigmaTd
 
     def SetS0(self, S0_SM, S0_BSM):
+        """Set the scalar and tensor signal covariance templates.
+
+        Args:
+            S0_SM: Scalar-mode covariance matrix.
+            S0_BSM: Tensor-mode covariance matrix.
+        """
         self.S0_CMB_SM = numpy.copy(S0_SM)
         self.S0_CMB_BSM = numpy.copy(S0_BSM)
         self.size = self.S0_CMB_SM.shape[0]
         pass
 
     def SetFgDmatrix(self, dmtrx):
+        """Attach the symbolic foreground mixing matrix.
+
+        Args:
+            dmtrx: Prepared ``DMatrix`` instance.
+        """
         self.dmtrx = dmtrx
 
     def DiffDmatrix(self):
@@ -114,6 +133,11 @@ class DeltaMap:
                 self.DiffDs.append(sympy.simplify(sympy.diff(self.dmtrx.D_matrix, param)))
 
     def CheckFitParams(self):
+        """Infer the ordered fit-parameter list from the D matrix and signal model.
+
+        Raises:
+            RuntimeError: If the signal covariance or D matrix has not been set.
+        """
         if self.S0_CMB_SM is None or self.S0_CMB_BSM is None or self.dmtrx is None:
             raise RuntimeError("Call SetS0() and SetFgDmatrix() before checking fit parameters.")
         self.params = []
@@ -125,23 +149,43 @@ class DeltaMap:
         pass
 
     def SetMvec(self, mvec):
+        """Store the observed or simulated maps as column vectors.
+
+        Args:
+            mvec: Sequence of per-frequency data vectors.
+        """
         tmp_mvec = []
         for mvec_i in mvec:
             tmp_mvec.append(mvec_i.reshape(len(mvec_i), 1))
         self.mvec = tmp_mvec
 
     def SetNoiseArray(self, narr):
+        """Set diagonal noise amplitudes for each frequency channel.
+
+        Args:
+            narr: Per-frequency scalar noise amplitudes.
+        """
         self.N_array = numpy.copy(narr)
         self.is_noise_set = True
         self.is_noise_matrix = False
 
     def SetNoiseList(self, N_list):
-        "List of Noise Cov Matrix"
+        """Set full noise covariance matrices for each frequency channel.
+
+        Args:
+            N_list: Sequence of per-frequency covariance matrices.
+        """
         self.N_list = N_list
         self.is_noise_set = True
         self.is_noise_matrix = True
 
     def CheckNoiseDim(self):
+        """Validate that the configured noise matches the D-matrix frequency count.
+
+        Raises:
+            RuntimeError: If no noise model has been configured yet.
+            ValueError: If the number of noise channels does not match the D matrix.
+        """
         if not self.is_noise_set:
             raise RuntimeError("SetNoiseArray() or SetNoiseList() must be called before checking noise dimensions.")
         nfreq_dmatrix = self.dmtrx.D_matrix.shape[0]
@@ -168,6 +212,15 @@ class DeltaMap:
 
     # def SetParameterInitial(self, names, inits, limits=None):
     def SetParameterInitial(self, inits):
+        """Register initial values and bounds for the active fit parameters.
+
+        Args:
+            inits: Mapping from parameter name to ``[initial, (lower, upper)]``.
+
+        Raises:
+            ValueError: If the provided parameter entries do not match the active
+                fit-parameter list.
+        """
         if len(self.params) != len(inits):
             raise ValueError("The number of initial parameter entries must match the fitted parameter list.")
         """
@@ -195,6 +248,11 @@ class DeltaMap:
         pass
 
     def SetParameters(self, values):
+        """Overwrite currently stored parameter values for matching keys.
+
+        Args:
+            values: Mapping of parameter names to updated values.
+        """
         for key in values.keys():
             if key in self.param_values:
                 self.param_values[key] = values[key]
@@ -345,6 +403,7 @@ class DeltaMap:
 	"""
 
     def initialise(self):
+        """Prepare internal matrices needed before likelihood evaluation."""
         self.CheckFitParams()
         self.CheckNoiseDim()
         self.CalcNInvArray()
@@ -1136,6 +1195,11 @@ class DeltaMap:
         return denomi + nume
 
     def IterateMinimize(self):
+        """Alternate foreground-only and ``r`` fits until convergence.
+
+        Returns:
+            A tuple of best-fit parameter values and their current errors.
+        """
         # tmp_r = self.inits['r'][0]
         self.lh = 1.0e10
         tmp_r = 100

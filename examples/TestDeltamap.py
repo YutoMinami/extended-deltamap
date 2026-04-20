@@ -569,10 +569,10 @@ def test_fg_with_noise_cov_xref(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="hoge")
-    parser.add_argument("config", help="all config file", default="./LTD_config+M0.ini")
+    parser = argparse.ArgumentParser(description="Run the DeltaMap fitting example")
+    parser.add_argument("config", help="simulation config file", default="./LTD_config+M0.ini")
     parser.add_argument("fitconfig", help="fit config file", default="./configs/Dust_var_M5_4freq.ini")
-    parser.add_argument("seed", help="fit config file", type=int)
+    parser.add_argument("seed", help="random seed for this fit run", type=int)
 
     args = parser.parse_args(args=None if argv is None else list(argv)[1:])
 
@@ -651,7 +651,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     dmp = None
 
-    results = []
     if "x^R" not in fit_params:
         dmp = test_fg_with_noise_cov(
             temp_freqs,
@@ -709,22 +708,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     td_sigma = None
     try:
         with_td_prior = fit_parser.getboolean("par", "Tdprior")
-    except:
+    except (configparser.NoOptionError, ValueError):
         pass
     try:
         td_sigma = fit_parser.getfloat("par", "Tdsigma")
-    except:
+    except (configparser.NoOptionError, ValueError):
         td_sigma = 3.0
     with_xr_prior = False
     xr_sigma = None
     try:
         with_xr_prior = fit_parser.getboolean("par", "xRprior")
-    except:
+    except (configparser.NoOptionError, ValueError):
         pass
 
     try:
         xr_sigma = fit_parser.getfloat("par", "xRsigma")
-    except:
+    except (configparser.NoOptionError, ValueError):
         xr_sigma = 3.0
 
     if with_td_prior:
@@ -751,7 +750,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     with_migrad = True
     try:
         with_migrad = fit_parser.getboolean("par", "migrad")
-    except:
+    except (configparser.NoOptionError, ValueError):
         pass
 
     dmp.migrad = with_migrad
@@ -760,7 +759,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     simul = False
     try:
         simul = fit_parser.getboolean("par", "simul")
-    except:
+    except (configparser.NoOptionError, ValueError):
         simul = False
     if not simul:
         dmp.IterateMinimize()
@@ -782,7 +781,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dmp.m.print_level = 1
             dmp.m.strategy = 2
             print(dmp.m.params)
-            if withmigrad:
+            if with_migrad:
                 dmp.m.migrad()
             else:
                 dmp.m.scipy()
@@ -799,14 +798,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(dmp.param_values)
             n_iter += 1
 
-    tmp_res = []
-    tmp_res.append(args.seed)
-    tmp_res.append(dmp.lh)
+    result_row = [args.seed, dmp.lh]
     for key in dmp.param_values.keys():
-        tmp_res.append(dmp.param_values[key])
-        tmp_res.append(dmp.param_errors[key])
-    results.append(tmp_res)
-    numpy.save(oname, numpy.asarray(results))
+        result_row.append(dmp.param_values[key])
+        result_row.append(dmp.param_errors[key])
+    numpy.save(oname, numpy.asarray([result_row]))
 
     return 0
 

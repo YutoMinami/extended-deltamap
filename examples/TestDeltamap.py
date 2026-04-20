@@ -23,15 +23,37 @@ FloatArray = npt.NDArray[numpy.float64]
 
 
 class SafeDict(dict[str, Any]):
+    """Dictionary that leaves unknown format keys untouched."""
+
     def __missing__(self, key: str) -> str:
         return "{" + key + "}"
 
 
 def resolve_path(base_dir: Path, path_text: str) -> str:
+    """Resolve a config-relative path to an absolute string path.
+
+    Args:
+        base_dir: Directory used as the reference point.
+        path_text: Relative or absolute path text from configuration.
+
+    Returns:
+        The resolved absolute path.
+    """
     return str((base_dir / path_text).resolve())
 
 
 def read_cell(cl_s_name: str | Path, nside: int, is_scalar: bool = True) -> FloatArray:
+    """Load CMB power spectra from a CAMB-style text file.
+
+    Args:
+        cl_s_name: Input spectrum filename.
+        nside: HEALPix nside used by the caller.
+        is_scalar: Whether the file stores scalar spectra with the expected
+            column layout.
+
+    Returns:
+        A spectrum array padded for direct use with ``healpy.synfast``.
+    """
     cl_s = numpy.loadtxt(cl_s_name)
     if len(cl_s[0]) in (4, 6) and is_scalar:
         cl_s = numpy.c_[cl_s[:, :3], numpy.zeros(len(cl_s))[:, numpy.newaxis], cl_s[:, 3]]
@@ -43,12 +65,30 @@ def read_cell(cl_s_name: str | Path, nside: int, is_scalar: bool = True) -> Floa
 
 
 def return_bell(ell: FloatArray, fwhm: float) -> FloatArray:
+    """Return the spin-2 Gaussian beam transfer function.
+
+    Args:
+        ell: Multipole values.
+        fwhm: Beam full width at half maximum in arcminutes.
+
+    Returns:
+        Beam response evaluated at each multipole.
+    """
     s = 2.0
     sigma_b = (fwhm * numpy.pi / 10800.0) / numpy.sqrt(8.0 * numpy.log(2))
     return numpy.exp(-(ell * (ell + 1) - s**2) * pow(sigma_b, 2) / 2)
 
 
 def return_noise_sigma(noise: float, nside: int) -> float:
+    """Convert map noise in uK-arcmin to pixel-domain sigma.
+
+    Args:
+        noise: Polarization noise level in uK-arcmin.
+        nside: HEALPix nside of the target map.
+
+    Returns:
+        Per-pixel Gaussian sigma in map units.
+    """
     npix = healpy.nside2npix(nside)
     pix_ster = 4.0 * numpy.pi / npix
     pix_amin = numpy.rad2deg(numpy.sqrt(pix_ster)) * 60.0
@@ -57,6 +97,16 @@ def return_noise_sigma(noise: float, nside: int) -> float:
 
 
 def return_cmb_map(r: float, nside: int, fwhm: float) -> FloatArray:
+    """Simulate a smoothed CMB map with scalar and tensor contributions.
+
+    Args:
+        r: Tensor-to-scalar ratio used for the tensor spectrum amplitude.
+        nside: Target HEALPix nside.
+        fwhm: Smoothing scale in arcminutes.
+
+    Returns:
+        A three-component ``healpy.synfast`` map.
+    """
     data_dir = importlib.resources.files("extended_deltamap").joinpath("files")
     cl_scalar = read_cell(data_dir / "test_lensedcls_49T7H5WT3X.dat", nside, True)
     cl_tensor = read_cell(data_dir / "test_tenscls_49T7H5WT3X.dat", nside, False)
@@ -73,6 +123,16 @@ def return_cmb_map(r: float, nside: int, fwhm: float) -> FloatArray:
 
 
 def return_anoise_map(anoise: float, nside: int, nonzero_len: int) -> FloatArray:
+    """Generate additional white noise samples for unmasked pixels.
+
+    Args:
+        anoise: Additional noise level in uK-arcmin.
+        nside: HEALPix nside of the target map.
+        nonzero_len: Number of unmasked Q/U samples.
+
+    Returns:
+        One-dimensional Gaussian noise samples for concatenated Q/U data.
+    """
     asigma = return_noise_sigma(anoise, nside)
     random_anoise = numpy.random.randn(nonzero_len) * asigma
     return random_anoise
@@ -85,6 +145,18 @@ def return_noise_cov(
     cov: Covariance,
     pixwin: bool = True,
 ) -> FloatArray:
+    """Build a pixel-space covariance matrix for white noise and beam smoothing.
+
+    Args:
+        noi: Frequency-channel noise level in uK-arcmin.
+        nside: HEALPix nside of the covariance grid.
+        beam: Instrument beam width in arcminutes.
+        cov: Working covariance object used to project spectra into pixel space.
+        pixwin: Whether to divide out the HEALPix pixel window before projection.
+
+    Returns:
+        Block covariance for concatenated Q/U pixels.
+    """
     ell = numpy.arange(0, nside * 2 + 1, 1)
     bl_nominal = return_bell(ell, beam)
     pw = healpy.pixwin(lmax=nside * 2, nside=nside, pol=True)[1]
@@ -100,6 +172,17 @@ def return_noise_cov(
 
 
 def return_noise_map(noise: float, nside: int, beam: float, fwhm: float) -> FloatArray:
+    """Generate a smoothed noise realization for Q/U maps.
+
+    Args:
+        noise: Frequency-channel noise level in uK-arcmin.
+        nside: HEALPix nside of the target map.
+        beam: Native beam width in arcminutes.
+        fwhm: Final smoothing width in arcminutes.
+
+    Returns:
+        A two-component Q/U noise map.
+    """
     npix = healpy.nside2npix(nside)
     noise_map = numpy.zeros(shape=(3, npix))
     sigma = return_noise_sigma(noise, nside)
@@ -149,6 +232,38 @@ def return_map_with_noise_cov(
     seed: int = 1,
     input_dir: str | None = None,
 ) -> list[FloatArray]:
+    """Assemble simulated frequency maps for DeltaMap fitting.
+
+    Args:
+        map_parser: Simulation config parser.
+        maskname: Mask FITS path.
+        anoise: Additional shared noise level in uK-arcmin.
+        fwhm: Common smoothing width in arcminutes.
+        nside: Target HEALPix nside.
+        r: Tensor-to-scalar ratio for the CMB simulation.
+        fgfac: Foreground amplitude multiplier.
+        nfac: Multiplicative factor for per-frequency noise maps.
+        freqs: Frequency channels in GHz.
+        noises: Per-channel noise levels in uK-arcmin.
+        fwhm_list: Per-channel beam widths in arcminutes.
+        dust_model: Symbolic dust scaling model.
+        synch_model: Symbolic synchrotron scaling model.
+        param_defs: Fixed foreground parameter values.
+        uni: Whether to use template scaling instead of per-frequency templates.
+        isdust: Whether to include dust emission.
+        issynch: Whether to include synchrotron emission.
+        re_noise: Whether to regenerate saved noise realizations.
+        re_cmb: Whether to regenerate the saved CMB realization.
+        dust_template: Dust template filename pattern.
+        synch_template: Synchrotron template filename pattern.
+        fixTd: Reserved compatibility flag for fixed dust temperature runs.
+        fgnoise_fac: Optional rescaling for fitting-frequency additional noise.
+        seed: Seed suffix used in cached filenames.
+        input_dir: Optional override for the generated input directory.
+
+    Returns:
+        Concatenated masked Q/U vectors, one per frequency channel.
+    """
     mvec = []
     mask = healpy.read_map(maskname, field=(0), dtype=numpy.float64)
     mask = healpy.ud_grade(mask, nside_out=nside)

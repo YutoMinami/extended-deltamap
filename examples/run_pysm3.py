@@ -16,6 +16,14 @@ warnings.filterwarnings("ignore")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Generate PySM foreground maps from a config file.
+
+    Args:
+        argv: Command-line style arguments. When omitted, ``sys.argv`` is used.
+
+    Returns:
+        Zero when map generation completes successfully.
+    """
     args = list(sys.argv if argv is None else argv)
 
     if len(args) == 1:

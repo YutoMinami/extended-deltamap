@@ -27,13 +27,13 @@ class SafeDict(dict[str, Any]):
         return "{" + key + "}"
 
 
-def ResolvePath(base_dir: Path, path_text: str) -> str:
+def resolve_path(base_dir: Path, path_text: str) -> str:
     return str((base_dir / path_text).resolve())
 
 
-def ReadCell(cl_s_name: str | Path, nside: int, isScalar: bool = True) -> FloatArray:
+def read_cell(cl_s_name: str | Path, nside: int, is_scalar: bool = True) -> FloatArray:
     cl_s = numpy.loadtxt(cl_s_name)
-    if len(cl_s[0]) in (4, 6) and isScalar:
+    if len(cl_s[0]) in (4, 6) and is_scalar:
         cl_s = numpy.c_[cl_s[:, :3], numpy.zeros(len(cl_s))[:, numpy.newaxis], cl_s[:, 3]]
     cls, ls = cl_s.T[1:5], cl_s.T[0]
     cl = cls * 2.0 * numpy.pi / (ls * (ls + 1.0))
@@ -42,13 +42,13 @@ def ReadCell(cl_s_name: str | Path, nside: int, isScalar: bool = True) -> FloatA
     return cl
 
 
-def ReturnBell(ell: FloatArray, fwhm: float) -> FloatArray:
+def return_bell(ell: FloatArray, fwhm: float) -> FloatArray:
     s = 2.0
     sigma_b = (fwhm * numpy.pi / 10800.0) / numpy.sqrt(8.0 * numpy.log(2))
     return numpy.exp(-(ell * (ell + 1) - s**2) * pow(sigma_b, 2) / 2)
 
 
-def ReturnNoiseSigma(noise: float, nside: int) -> float:
+def return_noise_sigma(noise: float, nside: int) -> float:
     npix = healpy.nside2npix(nside)
     pix_ster = 4.0 * numpy.pi / npix
     pix_amin = numpy.rad2deg(numpy.sqrt(pix_ster)) * 60.0
@@ -56,10 +56,10 @@ def ReturnNoiseSigma(noise: float, nside: int) -> float:
     return sigma
 
 
-def ReturnCMBMap(r: float, nside: int, fwhm: float) -> FloatArray:
+def return_cmb_map(r: float, nside: int, fwhm: float) -> FloatArray:
     data_dir = importlib.resources.files("extended_deltamap").joinpath("files")
-    cl_scalar = ReadCell(data_dir / "test_lensedcls_49T7H5WT3X.dat", nside, True)
-    cl_tensor = ReadCell(data_dir / "test_tenscls_49T7H5WT3X.dat", nside, False)
+    cl_scalar = read_cell(data_dir / "test_lensedcls_49T7H5WT3X.dat", nside, True)
+    cl_tensor = read_cell(data_dir / "test_tenscls_49T7H5WT3X.dat", nside, False)
     minlen = min(len(cl_scalar[1]), len(cl_tensor[1]))
     cmbmap = healpy.synfast(
         cl_scalar[:, :minlen] + cl_tensor[:, :minlen] * r,
@@ -72,13 +72,13 @@ def ReturnCMBMap(r: float, nside: int, fwhm: float) -> FloatArray:
     return cmbmap
 
 
-def ReturnANoiseMap(anoise: float, nside: int, nonzero_len: int) -> FloatArray:
-    asigma = ReturnNoiseSigma(anoise, nside)
+def return_anoise_map(anoise: float, nside: int, nonzero_len: int) -> FloatArray:
+    asigma = return_noise_sigma(anoise, nside)
     random_anoise = numpy.random.randn(nonzero_len) * asigma
     return random_anoise
 
 
-def ReturnNoiseCov(
+def return_noise_cov(
     noi: float,
     nside: int,
     beam: float,
@@ -86,7 +86,7 @@ def ReturnNoiseCov(
     pixwin: bool = True,
 ) -> FloatArray:
     ell = numpy.arange(0, nside * 2 + 1, 1)
-    bl_nominal = ReturnBell(ell, beam)
+    bl_nominal = return_bell(ell, beam)
     pw = healpy.pixwin(lmax=nside * 2, nside=nside, pol=True)[1]
     cell = numpy.zeros((6, nside * 2 + 1))
     noise_level = pow(noi * numpy.pi / 10800.0, 2)
@@ -99,10 +99,10 @@ def ReturnNoiseCov(
     return noise_cov
 
 
-def ReturnNoiseMap(noise: float, nside: int, beam: float, fwhm: float) -> FloatArray:
+def return_noise_map(noise: float, nside: int, beam: float, fwhm: float) -> FloatArray:
     npix = healpy.nside2npix(nside)
     noise_map = numpy.zeros(shape=(3, npix))
-    sigma = ReturnNoiseSigma(noise, nside)
+    sigma = return_noise_sigma(noise, nside)
 
     random_ar = numpy.random.randn(2, npix)
     noise_map[1] = random_ar[0] * sigma
@@ -122,7 +122,7 @@ def ReturnNoiseMap(noise: float, nside: int, beam: float, fwhm: float) -> FloatA
     return noise_map
 
 
-def ReturnMapWithNoiseCov(
+def return_map_with_noise_cov(
     map_parser: configparser.ConfigParser,
     maskname: str,
     anoise: float,
@@ -183,7 +183,7 @@ def ReturnMapWithNoiseCov(
     anoise_scale = "{0:.1e}".format(anoise).replace(".", "p")
     anoise_name = anoise_template.format(nside, anoise_scale, seed)
     if re_noise or not os.path.exists(anoise_name):
-        random_anoise = ReturnANoiseMap(anoise, nside, nonzero_len)
+        random_anoise = return_anoise_map(anoise, nside, nonzero_len)
         if not os.path.exists(anoise_name):
             numpy.save(anoise_name, random_anoise)
     else:
@@ -193,7 +193,7 @@ def ReturnMapWithNoiseCov(
     r_scale = "{0:.1e}".format(r).replace(".", "p")
     cmb_writename = cmb_template.format(nside, int(fwhm), r_scale, seed)
     if re_cmb or not os.path.exists(cmb_writename):
-        cmbmap = ReturnCMBMap(r, nside, fwhm)
+        cmbmap = return_cmb_map(r, nside, fwhm)
         if not os.path.exists(cmb_writename):
             healpy.write_map(cmb_writename, cmbmap, nest=False)
     else:
@@ -250,7 +250,7 @@ def ReturnMapWithNoiseCov(
             seed,
         )
         if re_noise or not os.path.exists(noisename):
-            noise_map = ReturnNoiseMap(noise, nside, beam, fwhm)
+            noise_map = return_noise_map(noise, nside, beam, fwhm)
             if not os.path.exists(noisename):
                 healpy.write_map(noisename, noise_map, nest=False)
         else:
@@ -263,25 +263,25 @@ def ReturnMapWithNoiseCov(
         anoise_freq_name = anoise_freq_template.format(nu_str, nside, seed)
         if re_noise or not os.path.exists(anoise_freq_name):
             if fgnoise_fac is None:
-                random_freq_anoise = ReturnANoiseMap(anoise, nside, nonzero_len)
+                random_freq_anoise = return_anoise_map(anoise, nside, nonzero_len)
             else:
-                random_freq_anoise = ReturnANoiseMap(noise / fgnoise_fac, nside, nonzero_len)
+                random_freq_anoise = return_anoise_map(noise / fgnoise_fac, nside, nonzero_len)
             if not os.path.exists(anoise_freq_name):
                 numpy.save(anoise_freq_name, random_freq_anoise)
         else:
             random_freq_anoise = numpy.load(anoise_freq_name)
             print("read old anoise freq  map")
 
-            random_anoise = ReturnANoiseMap(anoise, nside, nonzero_len)
+            random_anoise = return_anoise_map(anoise, nside, nonzero_len)
             if not os.path.exists(anoise_name):
                 numpy.save(anoise_name, random_anoise)
 
         if fgnoise_fac is None:
-            random_freq_anoise = ReturnANoiseMap(anoise, nside, nonzero_len)
+            random_freq_anoise = return_anoise_map(anoise, nside, nonzero_len)
             # random_freq_anoise = numpy.random.randn(nonzero_len) * asigma
         else:
-            random_freq_anoise = ReturnANoiseMap(noise / fgnoise_fac, nside, nonzero_len)
-            # noise_sigma_freq = ReturnNoiseSigma( noise / fgnoise_fac, nside)
+            random_freq_anoise = return_anoise_map(noise / fgnoise_fac, nside, nonzero_len)
+            # noise_sigma_freq = return_noise_sigma(noise / fgnoise_fac, nside)
             # random_freq_anoise = numpy.random.randn(nonzero_len) * noise_sigma_freq
         mvec_each += random_freq_anoise
 
@@ -289,7 +289,7 @@ def ReturnMapWithNoiseCov(
     return mvec
 
 
-def TestFGWithNoiseCov(
+def test_fg_with_noise_cov(
     freq_list: Sequence[float],
     n_list: Sequence[float],
     fwhm_list: Sequence[float],
@@ -333,7 +333,7 @@ def TestFGWithNoiseCov(
         isdust_map = isdust
     if issynch_map is None:
         issynch_map = issynch
-    mvec = ReturnMapWithNoiseCov(
+    mvec = return_map_with_noise_cov(
         map_parser,
         maskname,
         anoise,
@@ -383,7 +383,7 @@ def TestFGWithNoiseCov(
     s0_sm = cov.ReturnCovMatrix(True)
     s0_bsm = cov.ReturnCovMatrix(False)
 
-    asigma = ReturnNoiseSigma(anoise, nside)
+    asigma = return_noise_sigma(anoise, nside)
     a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
     dmp.SetFgDmatrix(dmt)
@@ -391,11 +391,11 @@ def TestFGWithNoiseCov(
     base_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     noise_list = []
     for nu, noi, beam in zip(freq_list, n_list, fwhm_list):
-        noise_cov = ReturnNoiseCov(noi, nside, beam, cov, pixwin=True)
+        noise_cov = return_noise_cov(noi, nside, beam, cov, pixwin=True)
         if fgnoise_fac is None:
             noise_total = noise_cov + base_noise_diag
         else:
-            noise_sigma_freq = ReturnNoiseSigma(noi / fgnoise_fac, nside)
+            noise_sigma_freq = return_noise_sigma(noi / fgnoise_fac, nside)
             freq_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(noise_sigma_freq, 2)
             noise_total = noise_cov + freq_noise_diag
         noise_list.append(noise_total)
@@ -428,7 +428,7 @@ def TestFGWithNoiseCov(
     return dmp
 
 
-def TestFGWithNoiseCovXRef(
+def test_fg_with_noise_cov_xref(
     freq_list: Sequence[float],
     n_list: Sequence[float],
     fwhm_list: Sequence[float],
@@ -472,7 +472,7 @@ def TestFGWithNoiseCovXRef(
         isdust_map = isdust
     if issynch_map is None:
         issynch_map = issynch
-    mvec = ReturnMapWithNoiseCov(
+    mvec = return_map_with_noise_cov(
         map_parser,
         maskname,
         anoise,
@@ -522,7 +522,7 @@ def TestFGWithNoiseCovXRef(
 
     s0_sm = cov.ReturnCovMatrix(True)
     s0_bsm = cov.ReturnCovMatrix(False)
-    asigma = ReturnNoiseSigma(anoise, nside)
+    asigma = return_noise_sigma(anoise, nside)
     # a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
@@ -531,11 +531,11 @@ def TestFGWithNoiseCovXRef(
     base_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     noise_list = []
     for nu, noi, beam in zip(freq_list, n_list, fwhm_list):
-        noise_cov = ReturnNoiseCov(noi, nside, beam, cov, pixwin=True)
+        noise_cov = return_noise_cov(noi, nside, beam, cov, pixwin=True)
         if fgnoise_fac is None:
             noise_total = noise_cov + base_noise_diag
         else:
-            noise_sigma_freq = ReturnNoiseSigma(noi / fgnoise_fac, nside)
+            noise_sigma_freq = return_noise_sigma(noi / fgnoise_fac, nside)
             freq_noise_diag = numpy.eye(s0_sm.shape[0]) * pow(noise_sigma_freq, 2)
             noise_total = noise_cov + freq_noise_diag
         noise_list.append(noise_total)
@@ -598,8 +598,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     dust_template_pattern = fit_parser.get("par", "dust_temp")
     synch_template_pattern = fit_parser.get("par", "synch_temp")
-    dust_template = ResolvePath(fitconfig_dir, dust_template_pattern.format_map(SafeDict(nside=nside)))
-    synch_template = ResolvePath(fitconfig_dir, synch_template_pattern.format_map(SafeDict(nside=nside)))
+    dust_template = resolve_path(fitconfig_dir, dust_template_pattern.format_map(SafeDict(nside=nside)))
+    synch_template = resolve_path(fitconfig_dir, synch_template_pattern.format_map(SafeDict(nside=nside)))
 
     dust_beta_env = "DELTAMAP_DUST_BETA_MAP"
     dust_temp_env = "DELTAMAP_DUST_TEMP_MAP"
@@ -640,20 +640,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_dir_setting = fit_parser.get("par", "odir")
     output_name_setting = fit_parser.get("par", "oname")
 
-    input_dir = ResolvePath(config_dir, input_dir_setting)
-    odir = Path(ResolvePath(fitconfig_dir, output_dir_setting.format(fitconfig_path.stem)))
+    input_dir = resolve_path(config_dir, input_dir_setting)
+    odir = Path(resolve_path(fitconfig_dir, output_dir_setting.format(fitconfig_path.stem)))
     oname = odir / output_name_setting.format(args.seed)
     odir.mkdir(parents=True, exist_ok=True)
     if oname.exists():
         return 0
 
-    maskname = ResolvePath(config_dir, map_parser.get("simpar", "maskname"))
+    maskname = resolve_path(config_dir, map_parser.get("simpar", "maskname"))
 
     dmp = None
 
     results = []
     if "x^R" not in fit_params:
-        dmp = TestFGWithNoiseCov(
+        dmp = test_fg_with_noise_cov(
             temp_freqs,
             noise_comb,
             fwhm_comb,
@@ -678,7 +678,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_dir=input_dir,
         )
     else:
-        dmp = TestFGWithNoiseCovXRef(
+        dmp = test_fg_with_noise_cov_xref(
             temp_freqs,
             noise_comb,
             fwhm_comb,

@@ -198,6 +198,7 @@ class DeltaMap:
         pass
 
     def CalcNInvArray(self):
+        """Build inverse-noise operators for the configured noise representation."""
         if self.is_noise_matrix:
             self.NI_list = []
             for idx, matrix in enumerate(self.N_list):
@@ -259,6 +260,7 @@ class DeltaMap:
         pass
 
     def CalcNIm(self):
+        """Accumulate the inverse-noise weighted data vector across frequencies."""
         self.NIm = None
         if self.is_noise_matrix:
             for ni_i, mvec_i in zip(self.NI_list, self.mvec):
@@ -278,6 +280,7 @@ class DeltaMap:
                 print("NIm: " + str(self.NIm))
 
     def Calcni(self):
+        """Accumulate the summed inverse-noise operator across frequencies."""
         self.ni = None
         for i in self.NI_list:
             if self.ni is None:
@@ -416,6 +419,7 @@ class DeltaMap:
 	"""
 
     def CalcCMB0Inverse(self):
+        """Update the signal covariance and its inverse for the current ``r`` value."""
         """
         r = sympy.Symbol('r')
         #for param,value in zip(self.params, self.param_values):
@@ -1057,6 +1061,7 @@ class DeltaMap:
         return det
 
     def ReturnlnS0(self):
+        """Return the log-determinant contribution from the signal covariance."""
         sign, det = numpy.linalg.slogdet(self.S0_CMB_L)
         # return 2*sign*det
         return 2 * det
@@ -1100,10 +1105,12 @@ class DeltaMap:
         return -2 * det
 
     def ReturnlnB(self):
+        """Return the log-determinant contribution from the B matrix."""
         sign, det = numpy.linalg.slogdet(self.BL)
         return 2 * det
 
     def ReturnlnDNID(self):
+        """Return the log-determinant contribution from the ``D^T N^{-1} D`` term."""
         sign, det = numpy.linalg.slogdet(self.DNIDL)
         # return 2*sign*det*self.size
         # return 2*det*self.size
@@ -1149,6 +1156,11 @@ class DeltaMap:
         return mNm + mNIAINIm + MHM + MHBIHM + TdTerm
 
     def ReturnLikelihood(self):
+        """Evaluate the current objective used by the DeltaMap fit.
+
+        Returns:
+            The scalar objective value for the currently stored parameters.
+        """
 
         # mHAINIm = self.ReturnmHAINIm()
         # mHBIHm = self.ReturnmHBIHm()
@@ -1437,6 +1449,14 @@ class DeltaMap:
         return True
 
     def is_pos_def(self, A):
+        """Check whether a matrix is symmetric positive definite.
+
+        Args:
+            A: Matrix to test.
+
+        Returns:
+            ``True`` when the matrix is symmetric and admits a Cholesky factorization.
+        """
         if numpy.array_equal(A, A.T):
             try:
                 numpy.linalg.cholesky(A)
@@ -1458,6 +1478,17 @@ class DeltaMap:
         ut[inds] = ut.T[inds]
 
     def fast_positive_definite_inverse(self, m):
+        """Invert a positive-definite matrix with LAPACK Cholesky routines.
+
+        Args:
+            m: Symmetric positive-definite matrix.
+
+        Returns:
+            The symmetric inverse matrix.
+
+        Raises:
+            ValueError: If the Cholesky factorization or inversion fails.
+        """
         cholesky, info = lapack.dpotrf(m)
         if info != 0:
             raise ValueError("dpotrf failed on input {}".format(m))

@@ -528,48 +528,43 @@ def TestFGWithNoiseCovXRef(
     dmp.SetS0(S0_SM + aNoise_Cov, S0_BSM)
     dmp.SetFgDmatrix(dmt)
 
-    # noise = numpy.array(n_list)
-    # sigma = ReturnNoiseSigma(noise, nside)
-
+    base_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(asigma, 2)
     Noise_list = []
     for nu, noi, beam in zip(freq_list, n_list, fwhm_list):
         noise_cov = ReturnNoiseCov(noi, nside, beam, cov, pixwin=True)
         if fgnoise_fac is None:
-            Noise_list.append(noise_cov + numpy.eye(S0_SM.shape[0]) * pow(asigma, 2))
+            noise_total = noise_cov + base_noise_diag
         else:
             noise_sigma_freq = ReturnNoiseSigma(noi / fgnoise_fac, nside)
-            Noise_list.append(noise_cov + numpy.eye(S0_SM.shape[0]) * pow(noise_sigma_freq, 2))
-    # dmp.SetNoiseArray( sigma**2 )
+            freq_noise_diag = numpy.eye(S0_SM.shape[0]) * pow(noise_sigma_freq, 2)
+            noise_total = noise_cov + freq_noise_diag
+        Noise_list.append(noise_total)
     dmp.SetNoiseList(Noise_list)
     dmp.SetMvec(mvec)
     dmp.initialise()
+    initial_params: dict[str, list[float | tuple[float, float]]]
     if isdust and issynch:
         if "x^R" not in param_defs.keys():
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10)], "beta_s": [-3.47, (-10.0, -0.01)]})
+            initial_params = {"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10)], "beta_s": [-3.47, (-10.0, -0.01)]}
         else:
-            dmp.SetParameterInitial(
-                {
-                    "r": [0.0, (0.0, 2.0)],
-                    "x^R": [0.81, (0.1, 10.0)],
-                    "beta_d": [1.5, (0.1, 10)],
-                    "beta_s": [-3.47, (-10.0, -0.01)],
-                }
-            )
-    elif isdust:
-        if fixTd:
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10.0)]})
-        elif fixbetad:
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "x^R": [0.81, (0.1, 10.0)]})
-        else:
-            dmp.SetParameterInitial({"r": [0.0, (0.0, 2.0)], "x^R": [0.81, (0.1, 10.0)], "beta_d": [1.5, (0.1, 10.0)]})
-
-    elif issynch:
-        dmp.SetParameterInitial(
-            {
+            initial_params = {
                 "r": [0.0, (0.0, 2.0)],
+                "x^R": [0.81, (0.1, 10.0)],
+                "beta_d": [1.5, (0.1, 10)],
                 "beta_s": [-3.47, (-10.0, -0.01)],
             }
-        )
+    elif isdust:
+        if fixTd:
+            initial_params = {"r": [0.0, (0.0, 2.0)], "beta_d": [1.5, (0.1, 10.0)]}
+        elif fixbetad:
+            initial_params = {"r": [0.0, (0.0, 2.0)], "x^R": [0.81, (0.1, 10.0)]}
+        else:
+            initial_params = {"r": [0.0, (0.0, 2.0)], "x^R": [0.81, (0.1, 10.0)], "beta_d": [1.5, (0.1, 10.0)]}
+    elif issynch:
+        initial_params = {"r": [0.0, (0.0, 2.0)], "beta_s": [-3.47, (-10.0, -0.01)]}
+    else:
+        initial_params = {"r": [0.0, (0.0, 2.0)]}
+    dmp.SetParameterInitial(initial_params)
     return dmp
 
 

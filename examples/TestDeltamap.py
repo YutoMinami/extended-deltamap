@@ -213,6 +213,8 @@ def ReturnMapWithNoiseCov(
         # print(nu,noise)
         fgmap = numpy.zeros_like(cmbmap)
         nu_str = "{0:07.2f}".format(nu).replace(".", "p")
+        noise_scale = "{0:.3f}".format(noise).replace(".", "p")
+        beam_scale = "{0:.1f}".format(beam).replace(".0", "p0")
         if uni:
             fac_mbb1 = float(dust_model.evalf(subs={"nu": nu}))
             fac_synch = float(synch_model.evalf(subs={"nu": nu}))
@@ -238,9 +240,9 @@ def ReturnMapWithNoiseCov(
         noisename = noise_template.format(
             nu_str,
             nside,
-            "{0:.3f}".format(noise).replace(".", "p"),
+            noise_scale,
             int(fwhm),
-            "{0:.1f}".format(beam).replace(".0", "p0"),
+            beam_scale,
             seed,
         )
         if re_noise or not os.path.exists(noisename):

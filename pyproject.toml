@@ -37,7 +37,14 @@ include = ["extended_deltamap*"]
 extended_deltamap = ["files/*.dat"]
 
 [dependency-groups]
-dev = []
+dev = [
+    "ruff>=0.15.11",
+]
 
 [tool.uv]
 package = true
+
+[tool.ruff]
+line-length = 88
+[tool.ruff.lint]
+select = ["E", "F", "I"]

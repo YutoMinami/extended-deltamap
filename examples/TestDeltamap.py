@@ -112,7 +112,11 @@ def ReturnNoiseMap(noise: float, nside: int, beam: float, fwhm: float) -> FloatA
     alm = healpy.map2alm(tmp_noise, lmax=nside * 2, pol=True)
 
     noise_map = healpy.alm2map(
-        alm, nside=nside, lmax=nside * 2, pixwin=True, fwhm=fwhm * numpy.sqrt(1 - pow(beam / fwhm, 2)) * numpy.pi / 10800.0
+        alm,
+        nside=nside,
+        lmax=nside * 2,
+        pixwin=True,
+        fwhm=fwhm * numpy.sqrt(1 - pow(beam / fwhm, 2)) * numpy.pi / 10800.0,
     )[1:]
     return noise_map
 

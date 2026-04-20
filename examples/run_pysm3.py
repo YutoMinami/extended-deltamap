@@ -25,7 +25,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     config_path = Path(filename).resolve()
     config_dir = config_path.parent
 
-    ##Get Parameters##
     parser = configparser.ConfigParser()
     parser.read(config_path)
     nu: npt.NDArray[np.float64] = np.array([float(i) for i in parser.get("par", "nu").split()])

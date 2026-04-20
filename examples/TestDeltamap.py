@@ -611,12 +611,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if nside != 4:
         fwhm_norm = 2200.0 * pow(4.0 / nside, 2)
 
-    dust_template = ResolvePath(fitconfig_dir, fit_parser.get("par", "dust_temp").format_map(SafeDict(nside=nside)))
-    synch_template = ResolvePath(fitconfig_dir, fit_parser.get("par", "synch_temp").format_map(SafeDict(nside=nside)))
-    dust_beta_path = os.environ.get("DELTAMAP_DUST_BETA_MAP")
-    dust_temp_path = os.environ.get("DELTAMAP_DUST_TEMP_MAP")
+    dust_template_pattern = fit_parser.get("par", "dust_temp")
+    synch_template_pattern = fit_parser.get("par", "synch_temp")
+    dust_template = ResolvePath(fitconfig_dir, dust_template_pattern.format_map(SafeDict(nside=nside)))
+    synch_template = ResolvePath(fitconfig_dir, synch_template_pattern.format_map(SafeDict(nside=nside)))
+
+    dust_beta_env = "DELTAMAP_DUST_BETA_MAP"
+    dust_temp_env = "DELTAMAP_DUST_TEMP_MAP"
+    dust_beta_path = os.environ.get(dust_beta_env)
+    dust_temp_path = os.environ.get(dust_temp_env)
     if dust_beta_path is None or dust_temp_path is None:
-        raise FileNotFoundError("Set DELTAMAP_DUST_BETA_MAP and DELTAMAP_DUST_TEMP_MAP to external template FITS files.")
+        raise FileNotFoundError(f"Set {dust_beta_env} and {dust_temp_env} to external template FITS files.")
     dust_beta_path = str(Path(dust_beta_path).expanduser().resolve())
     dust_temp_path = str(Path(dust_temp_path).expanduser().resolve())
     dust_beta_d = healpy.read_map(dust_beta_path, field=(0), dtype=numpy.float64)
@@ -646,9 +651,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         noise_comb = temp_noise[numpy.isin(nu_list, temp_freqs)]
     fwhm_comb = fwhm_list[numpy.isin(nu_list, temp_freqs)]
 
-    input_dir = ResolvePath(config_dir, map_parser.get("simpar", "input_dir"))
-    odir = Path(ResolvePath(fitconfig_dir, fit_parser.get("par", "odir").format(fitconfig_path.stem)))
-    oname = odir / fit_parser.get("par", "oname").format(args.seed)
+    input_dir_setting = map_parser.get("simpar", "input_dir")
+    output_dir_setting = fit_parser.get("par", "odir")
+    output_name_setting = fit_parser.get("par", "oname")
+
+    input_dir = ResolvePath(config_dir, input_dir_setting)
+    odir = Path(ResolvePath(fitconfig_dir, output_dir_setting.format(fitconfig_path.stem)))
+    oname = odir / output_name_setting.format(args.seed)
     odir.mkdir(parents=True, exist_ok=True)
     if oname.exists():
         return 0

@@ -1,28 +1,37 @@
 #!/usr/bin/env python
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 import configparser
+from typing import Sequence
+
 import healpy as hp
 import numpy as np
+import numpy.typing as npt
 import pysm3 as pysm
 import pysm3.units as u
 from pysm3 import models
 import warnings
 warnings.filterwarnings("ignore")
-def main():
-  if len(sys.argv) == 1:
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+  args = list(sys.argv if argv is None else argv)
+
+  if len(args) == 1:
     filename = './config.ini'
   else:
-    filename = sys.argv[1]
+    filename = args[1]
   config_path = Path(filename).resolve()
   config_dir = config_path.parent
 
   ##Get Parameters##
   parser = configparser.ConfigParser()
   parser.read(config_path)
-  nu = np.array([float(i) for i in parser.get('par','nu').split()])
-  fwhm =np.array([float(i) for i in parser.get('par','fwhm').split()]) 
-  noise =np.array([float(i) for i in parser.get('par','noise').split()]) 
+  nu: npt.NDArray[np.float64] = np.array([float(i) for i in parser.get('par','nu').split()])
+  fwhm: npt.NDArray[np.float64] = np.array([float(i) for i in parser.get('par','fwhm').split()]) 
+  noise: npt.NDArray[np.float64] = np.array([float(i) for i in parser.get('par','noise').split()]) 
   Nside = parser.getint('par','nside')
 
   ofdir = (config_dir / parser.get('fgpar', 'fg_dir').format(Nside)).resolve()

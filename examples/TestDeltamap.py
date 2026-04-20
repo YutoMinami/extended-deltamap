@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 import importlib.resources
 import sys
 from pathlib import Path
+from typing import Any, Mapping, Sequence
 import numpy
 import healpy
 import scipy
@@ -10,20 +13,26 @@ import sympy
 import scipy.constants.constants as constants
 import configparser
 import argparse
+import numpy.typing as npt
 from iminuit import Minuit
 from extended_deltamap import Templates, DMatrix, DeltaMap, Covariance
 
 from copy import deepcopy
 from collections import defaultdict
 
-class SafeDict(dict):
-  def __missing__(self, key):
+FloatArray = npt.NDArray[numpy.float64]
+
+
+class SafeDict(dict[str, Any]):
+  def __missing__(self, key: str) -> str:
     return '{' + key + '}'
 
-def ResolvePath(base_dir, path_text):
+
+def ResolvePath(base_dir: Path, path_text: str) -> str:
     return str((base_dir / path_text).resolve())
 
-def ReadCell(cl_s_name, nside , isScalar = True):
+
+def ReadCell(cl_s_name: str | Path, nside: int, isScalar: bool = True) -> FloatArray:
     cl_s = numpy.loadtxt(cl_s_name)
     if len(cl_s[0]) in (4, 6) and isScalar:
         cl_s = numpy.c_[cl_s[:,:3], numpy.zeros(len(cl_s))[:,numpy.newaxis],cl_s[:,3]]
@@ -32,19 +41,23 @@ def ReadCell(cl_s_name, nside , isScalar = True):
     cl = numpy.c_[numpy.zeros([cl.shape[0],2]),cl]
 
     return cl
-def ReturnBell(ell, fwhm):
+
+
+def ReturnBell(ell: FloatArray, fwhm: float) -> FloatArray:
     s=2.
     sigma_b =( fwhm * numpy.pi/10800.)/numpy.sqrt(8.*numpy.log(2))
     return numpy.exp(-(ell*(ell+1)-s**2)*pow(sigma_b,2)/2)
 
-def ReturnNoiseSigma(noise ,nside,):
+
+def ReturnNoiseSigma(noise: float, nside: int) -> float:
     npix = healpy.nside2npix(nside)
     pix_ster = 4.*numpy.pi/npix
     pix_amin = numpy.rad2deg(numpy.sqrt(pix_ster) ) *60.
     sigma = noise/pix_amin 
     return sigma
 
-def ReturnCMBMap(r, nside, fwhm):
+
+def ReturnCMBMap(r: float, nside: int, fwhm: float) -> FloatArray:
     data_dir = importlib.resources.files("extended_deltamap").joinpath("files")
     Cl_s = ReadCell(data_dir / 'test_lensedcls_49T7H5WT3X.dat', nside, True)
     Cl_t = ReadCell(data_dir / 'test_tenscls_49T7H5WT3X.dat', nside, False)
@@ -55,12 +68,19 @@ def ReturnCMBMap(r, nside, fwhm):
     return cmbmap
 
 
-def ReturnANoiseMap(anoise, nside, nonzero_len):
+def ReturnANoiseMap(anoise: float, nside: int, nonzero_len: int) -> FloatArray:
     asigma = ReturnNoiseSigma(anoise, nside)
     random_anoise = numpy.random.randn(nonzero_len)*asigma
     return random_anoise
 
-def ReturnNoiseCov(noi, nside, beam, cov, pixwin = True):
+
+def ReturnNoiseCov(
+    noi: float,
+    nside: int,
+    beam: float,
+    cov: Covariance,
+    pixwin: bool = True,
+) -> FloatArray:
     ell = numpy.arange(0, nside*2+1,1)
     bl_nominal  = ReturnBell(ell, beam)
     pw = healpy.pixwin( lmax= nside*2, nside = nside, pol=True)[1]
@@ -76,7 +96,7 @@ def ReturnNoiseCov(noi, nside, beam, cov, pixwin = True):
 
 
 
-def ReturnNoiseMap(noise, nside, beam, fwhm):
+def ReturnNoiseMap(noise: float, nside: int, beam: float, fwhm: float) -> FloatArray:
     npix = healpy.nside2npix(nside)
     noise_map = numpy.zeros( shape=(3, npix  ) )
     sigma = ReturnNoiseSigma(noise, nside)
@@ -95,12 +115,33 @@ def ReturnNoiseMap(noise, nside, beam, fwhm):
 
 
 
-def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac , nfac,
-             freqs, noises,fwhm_list, dust_model, synch_model, param_defs,uni = False, isdust=True, 
-        issynch =True,
-          re_noise = False, re_cmb = False, dust_template = None, synch_template= None, 
-          fixTd = False, fgnoise_fac = None, seed = 1, input_dir = None
-             ):
+def ReturnMapWithNoiseCov(
+    map_parser: configparser.ConfigParser,
+    maskname: str,
+    anoise: float,
+    fwhm: float,
+    nside: int,
+    r: float,
+    fgfac: float,
+    nfac: float,
+    freqs: Sequence[float],
+    noises: Sequence[float],
+    fwhm_list: Sequence[float],
+    dust_model: sympy.Expr,
+    synch_model: sympy.Expr,
+    param_defs: Mapping[str, float],
+    uni: bool = False,
+    isdust: bool = True,
+    issynch: bool = True,
+    re_noise: bool = False,
+    re_cmb: bool = False,
+    dust_template: str | None = None,
+    synch_template: str | None = None,
+    fixTd: bool = False,
+    fgnoise_fac: float | None = None,
+    seed: int = 1,
+    input_dir: str | None = None,
+) -> list[FloatArray]:
     mvec= []
     mask= healpy.read_map( maskname, field=(0), dtype = numpy.float64)
     mask = healpy.ud_grade(mask,nside_out=nside)
@@ -229,14 +270,36 @@ def ReturnMapWithNoiseCov( map_parser, maskname , anoise, fwhm, nside, r,fgfac ,
 
 
 
-def TestFGWithNoiseCov(freq_list, n_list, fwhm_list, maskname, map_parser, nside=4, fwhm=2200., 
-                           isdust = True, issynch = True, r = 1.0e-3, anoise = 2.0e-2,
-                       param_defs ={'beta_s':-3.0, 'beta_d':1.5, 'T_d1':20.9}, 
-                        dust_template =None, synch_template= None,
-                       uni =False, fixTd = False, fixbetad = False, fgnoise_fac = None,
-                           fgfac = 1.0, dmp = None, T_d1_mean = 20, beta_d_mean = 1.5, seed = 1, re_noise= False, re_cmb = False, isdust_map = None, issynch_map = None,
-                       input_dir = None,
-    ):
+def TestFGWithNoiseCov(
+    freq_list: Sequence[float],
+    n_list: Sequence[float],
+    fwhm_list: Sequence[float],
+    maskname: str,
+    map_parser: configparser.ConfigParser,
+    nside: int = 4,
+    fwhm: float = 2200.,
+    isdust: bool = True,
+    issynch: bool = True,
+    r: float = 1.0e-3,
+    anoise: float = 2.0e-2,
+    param_defs: Mapping[str, float] = {'beta_s':-3.0, 'beta_d':1.5, 'T_d1':20.9},
+    dust_template: str | None = None,
+    synch_template: str | None = None,
+    uni: bool = False,
+    fixTd: bool = False,
+    fixbetad: bool = False,
+    fgnoise_fac: float | None = None,
+    fgfac: float = 1.0,
+    dmp: DeltaMap | None = None,
+    T_d1_mean: float = 20,
+    beta_d_mean: float = 1.5,
+    seed: int = 1,
+    re_noise: bool = False,
+    re_cmb: bool = False,
+    isdust_map: bool | None = None,
+    issynch_map: bool | None = None,
+    input_dir: str | None = None,
+) -> DeltaMap:
     anoise = anoise
     fgfac = fgfac
     nfac =1 
@@ -333,14 +396,36 @@ def TestFGWithNoiseCov(freq_list, n_list, fwhm_list, maskname, map_parser, nside
     return dmp
 
 
-def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list, maskname, map_parser, nside=4, fwhm=2200., 
-                           isdust = True, issynch = True, r = 1.0e-3, anoise = 2.0e-2,
-                       param_defs ={'beta_s':-3.0, 'beta_d':1.5, 'x^R':0.81}, 
-                        dust_template =None, synch_template= None,
-                       uni =False, fixTd = False, fixbetad = False, fgnoise_fac = None,
-                           fgfac = 1.0, dmp = None, T_d1_mean = 20, beta_d_mean = 1.5, seed = 1, re_noise = False, re_cmb = False, isdust_map = None, issynch_map = None,
-                       input_dir = None,
-    ):
+def TestFGWithNoiseCovXRef(
+    freq_list: Sequence[float],
+    n_list: Sequence[float],
+    fwhm_list: Sequence[float],
+    maskname: str,
+    map_parser: configparser.ConfigParser,
+    nside: int = 4,
+    fwhm: float = 2200.,
+    isdust: bool = True,
+    issynch: bool = True,
+    r: float = 1.0e-3,
+    anoise: float = 2.0e-2,
+    param_defs: Mapping[str, float] = {'beta_s':-3.0, 'beta_d':1.5, 'x^R':0.81},
+    dust_template: str | None = None,
+    synch_template: str | None = None,
+    uni: bool = False,
+    fixTd: bool = False,
+    fixbetad: bool = False,
+    fgnoise_fac: float | None = None,
+    fgfac: float = 1.0,
+    dmp: DeltaMap | None = None,
+    T_d1_mean: float = 20,
+    beta_d_mean: float = 1.5,
+    seed: int = 1,
+    re_noise: bool = False,
+    re_cmb: bool = False,
+    isdust_map: bool | None = None,
+    issynch_map: bool | None = None,
+    input_dir: str | None = None,
+) -> DeltaMap:
     anoise = anoise
     fgfac = fgfac
     nfac =1 
@@ -437,13 +522,13 @@ def TestFGWithNoiseCovXRef(freq_list, n_list, fwhm_list, maskname, map_parser, n
     return dmp
 
 
-def main():
+def main(argv: Sequence[str] | None = None) -> int:
   parser = argparse.ArgumentParser(description='hoge')
   parser.add_argument('config', help='all config file', default = './LTD_config+M0.ini' )
   parser.add_argument('fitconfig', help='fit config file', default = './configs/Dust_var_M5_4freq.ini' )
   parser.add_argument('seed', help='fit config file', type = int)
 
-  args = parser.parse_args()
+  args = parser.parse_args(args=None if argv is None else list(argv)[1:])
 
   config_path = Path(args.config).resolve()
   fitconfig_path = Path(args.fitconfig).resolve()

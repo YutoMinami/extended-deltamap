@@ -319,10 +319,7 @@ def TestFGWithNoiseCov(
     issynch_map: bool | None = None,
     input_dir: str | None = None,
 ) -> DeltaMap:
-    anoise = anoise
-    fgfac = fgfac
     nfac = 1
-    nuRef = 353.0
 
     tmpl = Templates()
 
@@ -466,16 +463,14 @@ def TestFGWithNoiseCovXRef(
     issynch_map: bool | None = None,
     input_dir: str | None = None,
 ) -> DeltaMap:
-    anoise = anoise
-    fgfac = fgfac
     nfac = 1
-    nuRef = 353.0
+    nu_ref = 353.0
 
     tmpl = Templates()
     mbb1 = tmpl.ReturnMBB1_xRef()
     synch = tmpl.ReturnPowerLawSynch()
     if fixTd:
-        mbb1 = mbb1.subs("x^R", (constants.h * nuRef * 1.0e9) / (T_d1_mean * constants.k))
+        mbb1 = mbb1.subs("x^R", (constants.h * nu_ref * 1.0e9) / (T_d1_mean * constants.k))
     if fixbetad:
         mbb1 = mbb1.subs("beta_d", beta_d_mean)
     if isdust_map is None:

@@ -705,56 +705,56 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     dmp.SetParameters(values=params)
 
-    withTdPrior = False
+    with_td_prior = False
     td_sigma = None
     try:
-        withTdPrior = fit_parser.getboolean("par", "Tdprior")
+        with_td_prior = fit_parser.getboolean("par", "Tdprior")
     except:
         pass
     try:
         td_sigma = fit_parser.getfloat("par", "Tdsigma")
     except:
         td_sigma = 3.0
-    withxRPrior = False
-    xRsigma = None
+    with_xr_prior = False
+    xr_sigma = None
     try:
-        withxRPrior = fit_parser.getboolean("par", "xRprior")
+        with_xr_prior = fit_parser.getboolean("par", "xRprior")
     except:
         pass
 
     try:
-        xRsigma = fit_parser.getfloat("par", "xRsigma")
+        xr_sigma = fit_parser.getfloat("par", "xRsigma")
     except:
-        xRsigma = 3.0
+        xr_sigma = 3.0
 
-    if withTdPrior:
+    if with_td_prior:
         mask_map = healpy.read_map(maskname, field=(0), nest=False, dtype=numpy.float64)
         mask_map = healpy.ud_grade(mask_map, nside_out=nside)
-        dmp.withTdPrior = withTdPrior
+        dmp.withTdPrior = with_td_prior
         dmp.SetTdPrior(dust_td1[mask_map == 1].mean(), dust_td1[mask_map == 1].std() * td_sigma)
-    if withxRPrior:
+    if with_xr_prior:
         mask_map = healpy.read_map(maskname, field=(0), nest=False, dtype=numpy.float64)
         mask_map = healpy.ud_grade(mask_map, nside_out=nside)
-        dmp.withxRPrior = withxRPrior
-        nuRef = 353.0
-        xRmean = constants.h * nuRef * 1.0e9 / (constants.k * dust_td1[mask_map == 1].mean())
-        xRstd = (
+        dmp.withxRPrior = with_xr_prior
+        nu_ref = 353.0
+        xr_mean = constants.h * nu_ref * 1.0e9 / (constants.k * dust_td1[mask_map == 1].mean())
+        xr_std = (
             constants.h
-            * nuRef
+            * nu_ref
             * 1.0e9
             / (constants.k * pow(dust_td1[mask_map == 1].mean(), 2))
             * dust_td1[mask_map == 1].std()
         )
-        print("xR +/- = {0:.2f} +/- {1:.2f}".format(xRmean, xRstd))
-        dmp.SetxRPrior(xRmean, xRstd * xRsigma)
+        print("xR +/- = {0:.2f} +/- {1:.2f}".format(xr_mean, xr_std))
+        dmp.SetxRPrior(xr_mean, xr_std * xr_sigma)
 
-    withmigrad = True
+    with_migrad = True
     try:
-        withmigrad = fit_parser.getboolean("par", "migrad")
+        with_migrad = fit_parser.getboolean("par", "migrad")
     except:
         pass
 
-    dmp.migrad = withmigrad
+    dmp.migrad = with_migrad
     dmp.r_verbose = False
 
     simul = False

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import os
 
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -28,6 +29,111 @@ class SafeDict(dict[str, Any]):
     def __missing__(self, key: str) -> str:
         """Return the original placeholder text for unknown format keys."""
         return "{" + key + "}"
+
+
+def get_config_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> str:
+    """Read the first available config entry from a list of section/key pairs."""
+    for section, option in candidates:
+        if parser.has_option(section, option):
+            return parser.get(section, option)
+    joined = ", ".join(f"[{section}] {option}" for section, option in candidates)
+    raise configparser.NoOptionError(joined, candidates[0][0])
+
+
+def parse_float_list(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> numpy.ndarray:
+    """Read a whitespace-separated float list from the first matching config key."""
+    return numpy.array([float(value) for value in get_config_value(parser, *candidates).split()])
+
+
+def get_int_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> int:
+    """Read an integer value from the first matching config key."""
+    return int(get_config_value(parser, *candidates))
+
+
+def get_float_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> float:
+    """Read a float value from the first matching config key."""
+    return float(get_config_value(parser, *candidates))
+
+
+def get_bool_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> bool:
+    """Read a boolean value from the first matching config key."""
+    return parser._convert_to_boolean(get_config_value(parser, *candidates))
+
+
+def validate_fit_setup(
+    *,
+    map_parser: configparser.ConfigParser,
+    fit_parser: configparser.ConfigParser,
+    nu_list: numpy.ndarray,
+    fwhm_list: numpy.ndarray,
+    noise_list: numpy.ndarray,
+    nu_list_fit: numpy.ndarray,
+    fit_params: list[str],
+    fit_inits: numpy.ndarray,
+) -> None:
+    """Raise a clear error when the example config is internally inconsistent."""
+    if len(nu_list) != len(fwhm_list) or len(nu_list) != len(noise_list):
+        raise ValueError("Map config must define the same number of nu, fwhm, and noise entries.")
+
+    if len(fit_params) != len(fit_inits):
+        raise ValueError("Fit config must define the same number of params and inits entries.")
+
+    if len(nu_list_fit) == 0:
+        raise ValueError("Fit config must define at least one fitting frequency in 'nu'.")
+
+    if not numpy.all(numpy.isin(nu_list_fit, nu_list)):
+        missing = [f"{freq:g}" for freq in nu_list_fit[~numpy.isin(nu_list_fit, nu_list)]]
+        raise ValueError(
+            "Fit frequencies must be a subset of the simulation frequencies from the map config. "
+            f"Missing from map config: {', '.join(missing)}"
+        )
+
+    isdust = get_bool_value(fit_parser, ("fit", "isdust"), ("par", "isdust"))
+    issynch = get_bool_value(fit_parser, ("fit", "issynch"), ("par", "issynch"))
+    if not isdust and not issynch:
+        raise ValueError("At least one foreground component must be enabled: set 'isdust' or 'issynch' to True.")
+
+    if "r" not in fit_params:
+        raise ValueError("Fit params must include 'r'.")
+
+    min_freq_count = 1
+    if isdust:
+        min_freq_count += 2 if get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")) else 3
+    if issynch:
+        min_freq_count += 2
+    if len(nu_list_fit) < min_freq_count:
+        raise ValueError(
+            "Not enough fitting frequencies for the selected model. "
+            f"Need at least {min_freq_count}, got {len(nu_list_fit)}."
+        )
+
+    output_name = get_config_value(fit_parser, ("io", "oname"), ("par", "oname"))
+    if not output_name.endswith(".csv"):
+        raise ValueError("Fit outputs should use a '.csv' filename in 'oname'.")
+
+
+def write_fit_result_csv(
+    output_path: Path,
+    seed: int,
+    likelihood: float,
+    param_values: Mapping[str, float],
+    param_errors: Mapping[str, float],
+) -> None:
+    """Write one fit result row as a CSV file with explicit column names."""
+    fieldnames = ["seed", "likelihood"]
+    row: dict[str, float | int] = {"seed": seed, "likelihood": likelihood}
+
+    for key in param_values.keys():
+        value_field = key
+        error_field = f"{key}_error"
+        fieldnames.extend([value_field, error_field])
+        row[value_field] = param_values[key]
+        row[error_field] = param_errors[key]
+
+    with output_path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(row)
 
 
 def resolve_path(base_dir: Path, path_text: str) -> str:
@@ -283,13 +389,19 @@ def return_map_with_noise_cov(
     if isdust and uni:
         piv_mbb1 = float(dust_model.evalf(subs={"nu": 402}))
 
-    input_dir_value = input_dir if input_dir is not None else map_parser.get("simpar", "input_dir")
+    input_dir_value = (
+        input_dir
+        if input_dir is not None
+        else get_config_value(map_parser, ("simulation", "input_dir"), ("simpar", "input_dir"))
+    )
     input_dir_path = Path(input_dir_value)
     input_dir_path.mkdir(parents=True, exist_ok=True)
-    noise_template = str(input_dir_path / map_parser.get("simpar", "noise_name"))
-    anoise_freq_template = str(input_dir_path / map_parser.get("simpar", "anoise_freq_name"))
-    anoise_template = str(input_dir_path / map_parser.get("simpar", "anoise_name"))
-    cmb_template = str(input_dir_path / map_parser.get("simpar", "cmb_name"))
+    noise_template = str(input_dir_path / get_config_value(map_parser, ("simulation", "noise_name"), ("simpar", "noise_name")))
+    anoise_freq_template = str(
+        input_dir_path / get_config_value(map_parser, ("simulation", "anoise_freq_name"), ("simpar", "anoise_freq_name"))
+    )
+    anoise_template = str(input_dir_path / get_config_value(map_parser, ("simulation", "anoise_name"), ("simpar", "anoise_name")))
+    cmb_template = str(input_dir_path / get_config_value(map_parser, ("simulation", "cmb_name"), ("simpar", "cmb_name")))
 
     synchmapname = synch_template
     dustmapname = dust_template
@@ -775,17 +887,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     fit_parser.read(fitconfig_path)
     numpy.random.seed(args.seed)
 
-    nu_list = numpy.array([float(i) for i in map_parser.get("par", "nu").split()])
-    fwhm_list = numpy.array([float(i) for i in map_parser.get("par", "fwhm").split()])
-    noise_list = numpy.array([float(i) for i in map_parser.get("par", "noise").split()])
-    nside = fit_parser.getint("par", "nside")
+    nu_list = parse_float_list(map_parser, ("instrument", "nu"), ("par", "nu"))
+    fwhm_list = parse_float_list(map_parser, ("instrument", "fwhm"), ("par", "fwhm"))
+    noise_list = parse_float_list(map_parser, ("instrument", "noise"), ("par", "noise"))
+    nside = get_int_value(fit_parser, ("fit", "nside"), ("par", "nside"))
 
     fwhm_norm = 2200.0
     if nside != 4:
         fwhm_norm = 2200.0 * pow(4.0 / nside, 2)
 
-    dust_template_pattern = fit_parser.get("par", "dust_temp")
-    synch_template_pattern = fit_parser.get("par", "synch_temp")
+    dust_template_pattern = get_config_value(fit_parser, ("templates", "dust_temp"), ("par", "dust_temp"))
+    synch_template_pattern = get_config_value(fit_parser, ("templates", "synch_temp"), ("par", "synch_temp"))
     dust_template = resolve_path(fitconfig_dir, dust_template_pattern.format_map(SafeDict(nside=nside)))
     synch_template = resolve_path(fitconfig_dir, synch_template_pattern.format_map(SafeDict(nside=nside)))
 
@@ -800,21 +912,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     dust_beta_d = healpy.read_map(dust_beta_path, field=(0), dtype=numpy.float64)
     dust_td1 = healpy.read_map(dust_temp_path, field=(0), dtype=numpy.float64)
 
-    nu_list_fit = numpy.array([float(i) for i in fit_parser.get("par", "nu").split()])
+    nu_list_fit = parse_float_list(fit_parser, ("fit", "nu"), ("par", "nu"))
 
     dust_beta_d = healpy.ud_grade(map_in=dust_beta_d, nside_out=nside, order_in="RING", order_out="RING")
     dust_td1 = healpy.ud_grade(map_in=dust_td1, nside_out=nside, order_in="RING", order_out="RING")
 
     temp_freqs = nu_list_fit
     temp_noise = noise_list
-    anoise = fit_parser.getfloat("par", "anoise")
-    if fit_parser.getfloat("par", "fgnoise_fac") < 0:
+    anoise = get_float_value(fit_parser, ("fit", "anoise"), ("par", "anoise"))
+    if get_float_value(fit_parser, ("fit", "fgnoise_fac"), ("par", "fgnoise_fac")) < 0:
         fgnoise_fac = None
     else:
-        fgnoise_fac = fit_parser.getfloat("par", "fgnoise_fac")
+        fgnoise_fac = get_float_value(fit_parser, ("fit", "fgnoise_fac"), ("par", "fgnoise_fac"))
 
-    fit_params = fit_parser.get("par", "params").split()
-    fit_inits = numpy.array([float(i) for i in fit_parser.get("par", "inits").split()])
+    fit_params = get_config_value(fit_parser, ("fit", "params"), ("par", "params")).split()
+    fit_inits = parse_float_list(fit_parser, ("fit", "inits"), ("par", "inits"))
+    validate_fit_setup(
+        map_parser=map_parser,
+        fit_parser=fit_parser,
+        nu_list=nu_list,
+        fwhm_list=fwhm_list,
+        noise_list=noise_list,
+        nu_list_fit=nu_list_fit,
+        fit_params=fit_params,
+        fit_inits=fit_inits,
+    )
     params = {}
     param_defs = {}
     for par, ini in zip(fit_params, fit_inits):
@@ -824,9 +946,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         noise_comb = temp_noise[numpy.isin(nu_list, temp_freqs)]
     fwhm_comb = fwhm_list[numpy.isin(nu_list, temp_freqs)]
 
-    input_dir_setting = map_parser.get("simpar", "input_dir")
-    output_dir_setting = fit_parser.get("par", "odir")
-    output_name_setting = fit_parser.get("par", "oname")
+    input_dir_setting = get_config_value(map_parser, ("simulation", "input_dir"), ("simpar", "input_dir"))
+    output_dir_setting = get_config_value(fit_parser, ("io", "odir"), ("par", "odir"))
+    output_name_setting = get_config_value(fit_parser, ("io", "oname"), ("par", "oname"))
 
     input_dir = resolve_path(config_dir, input_dir_setting)
     odir = Path(resolve_path(fitconfig_dir, output_dir_setting.format(fitconfig_path.stem)))
@@ -835,7 +957,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if oname.exists():
         return 0
 
-    maskname = resolve_path(config_dir, map_parser.get("simpar", "maskname"))
+    maskname = resolve_path(config_dir, get_config_value(map_parser, ("simulation", "maskname"), ("simpar", "maskname")))
 
     dmp = None
 
@@ -848,16 +970,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             map_parser,
             nside=nside,
             fwhm=fwhm_norm,
-            isdust=fit_parser.getboolean("par", "isdust"),
-            issynch=fit_parser.getboolean("par", "issynch"),
-            r=fit_parser.getfloat("par", "r"),
-            uni=fit_parser.getboolean("par", "uni"),
+            isdust=get_bool_value(fit_parser, ("fit", "isdust"), ("par", "isdust")),
+            issynch=get_bool_value(fit_parser, ("fit", "issynch"), ("par", "issynch")),
+            r=get_float_value(fit_parser, ("fit", "r"), ("par", "r")),
+            uni=get_bool_value(fit_parser, ("fit", "uni"), ("par", "uni")),
             param_defs=param_defs,
             dust_template=dust_template,
             synch_template=synch_template,
             anoise=anoise,
             fgnoise_fac=fgnoise_fac,
-            fixTd=fit_parser.getboolean("par", "fixTd"),
+            fixTd=get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")),
             dmp=dmp,
             T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),
@@ -873,16 +995,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             map_parser,
             nside=nside,
             fwhm=fwhm_norm,
-            isdust=fit_parser.getboolean("par", "isdust"),
-            issynch=fit_parser.getboolean("par", "issynch"),
-            r=fit_parser.getfloat("par", "r"),
-            uni=fit_parser.getboolean("par", "uni"),
+            isdust=get_bool_value(fit_parser, ("fit", "isdust"), ("par", "isdust")),
+            issynch=get_bool_value(fit_parser, ("fit", "issynch"), ("par", "issynch")),
+            r=get_float_value(fit_parser, ("fit", "r"), ("par", "r")),
+            uni=get_bool_value(fit_parser, ("fit", "uni"), ("par", "uni")),
             param_defs=param_defs,
             dust_template=dust_template,
             synch_template=synch_template,
             anoise=anoise,
             fgnoise_fac=fgnoise_fac,
-            fixTd=fit_parser.getboolean("par", "fixTd"),
+            fixTd=get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")),
             dmp=dmp,
             T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),
@@ -895,22 +1017,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     with_td_prior = False
     td_sigma = None
     try:
-        with_td_prior = fit_parser.getboolean("par", "Tdprior")
+        with_td_prior = get_bool_value(fit_parser, ("priors", "Tdprior"), ("par", "Tdprior"))
     except (configparser.NoOptionError, ValueError):
         pass
     try:
-        td_sigma = fit_parser.getfloat("par", "Tdsigma")
+        td_sigma = get_float_value(fit_parser, ("priors", "Tdsigma"), ("par", "Tdsigma"))
     except (configparser.NoOptionError, ValueError):
         td_sigma = 3.0
     with_xr_prior = False
     xr_sigma = None
     try:
-        with_xr_prior = fit_parser.getboolean("par", "xRprior")
+        with_xr_prior = get_bool_value(fit_parser, ("priors", "xRprior"), ("par", "xRprior"))
     except (configparser.NoOptionError, ValueError):
         pass
 
     try:
-        xr_sigma = fit_parser.getfloat("par", "xRsigma")
+        xr_sigma = get_float_value(fit_parser, ("priors", "xRsigma"), ("par", "xRsigma"))
     except (configparser.NoOptionError, ValueError):
         xr_sigma = 3.0
 
@@ -937,7 +1059,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     with_migrad = True
     try:
-        with_migrad = fit_parser.getboolean("par", "migrad")
+        with_migrad = get_bool_value(fit_parser, ("fit", "migrad"), ("par", "migrad"))
     except (configparser.NoOptionError, ValueError):
         pass
 
@@ -946,7 +1068,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     simul = False
     try:
-        simul = fit_parser.getboolean("par", "simul")
+        simul = get_bool_value(fit_parser, ("fit", "simul"), ("par", "simul"))
     except (configparser.NoOptionError, ValueError):
         simul = False
     if not simul:
@@ -986,11 +1108,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(dmp.param_values)
             n_iter += 1
 
-    result_row = [args.seed, dmp.lh]
-    for key in dmp.param_values.keys():
-        result_row.append(dmp.param_values[key])
-        result_row.append(dmp.param_errors[key])
-    numpy.save(oname, numpy.asarray([result_row]))
+    write_fit_result_csv(
+        oname,
+        seed=args.seed,
+        likelihood=dmp.lh,
+        param_values=dmp.param_values,
+        param_errors=dmp.param_errors,
+    )
 
     return 0
 

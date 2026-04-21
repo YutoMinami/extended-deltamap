@@ -143,6 +143,65 @@ uv run python examples/TestDeltamap.py \
   1
 ```
 
+## Example configs
+
+The repository currently keeps the runtime configuration in `ini` files. This
+is still a reasonable fit for the project because the example runs mainly need
+flat values such as booleans, numeric parameters, paths, and frequency lists.
+
+The most useful example configs are:
+
+- `examples/LTD_config.ini`
+  Base simulation setup with the full LiteBIRD-like 15-band frequency list,
+  beam widths, noise levels, and input naming patterns.
+- `examples/Synch_var_3freq_r1e-2.ini`
+  Minimal synchrotron-only first-order fit example.
+- `examples/Dust_var_4freq_r1e-2.ini`
+  Minimal dust-only first-order fit example.
+- `examples/Dust_var_7freq_r1e-2.ini`
+  Dust-only 7-band setup used as a second-order minimum-frequency candidate.
+- `examples/Dust_var_9freq_r1e-2.ini`
+  Dust-only 9-band setup using all channels from `100 GHz` through `402 GHz`,
+  closer to the band selection discussed in the paper.
+
+In practice, the `ini` format matters less than keeping the examples readable
+and safe to run. To help with that, `examples/TestDeltamap.py` now performs
+basic config validation before the expensive map and likelihood steps:
+
+- the map config must provide matching `nu`, `noise`, and `fwhm` lengths
+- the fit config must provide matching `params` and `inits` lengths
+- fit frequencies must be a subset of the simulation frequencies
+- at least one foreground component must be enabled
+- the fit model must have enough frequency channels for its current parameter
+  count
+- fit outputs are expected to use `.csv`
+
+When adding new configs, the preferred section layout is now:
+
+- `[instrument]`
+  Shared observing setup such as `nu`, `noise`, `fwhm`, and `nside`
+- `[foreground]`
+  PySM component names and generated foreground output patterns such as
+  `components`, `fg_dir`, and `fg_name`
+- `[simulation]`
+  Input cache and auxiliary map patterns such as `input_dir`, `noise_name`,
+  `anoise_name`, `anoise_freq_name`, `cmb_name`, and `maskname`
+- `[fit]`
+  Fit-time settings such as selected channels, enabled components, parameter
+  lists, initial values, `anoise`, `fgnoise_fac`, `fixTd`, `migrad`, and
+  `simul`
+- `[templates]`
+  Foreground template map patterns such as `dust_temp` and `synch_temp`
+- `[io]`
+  Output directory and filename pattern such as `odir` and `oname`
+- `[priors]`
+  Optional prior toggles and widths such as `Tdprior`, `Tdsigma`, `xRprior`,
+  and `xRsigma`
+
+The example scripts currently accept both the legacy sections (`[par]`,
+`[fgpar]`, `[simpar]`) and the newer section names above, so configs can be
+migrated gradually.
+
 ## Typical workflow
 
 1. Sync the environment with `uv sync`.

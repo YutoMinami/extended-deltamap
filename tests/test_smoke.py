@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import sympy
 
 from extended_deltamap import Covariance, DMatrix, Templates
 
@@ -70,6 +71,31 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(first_shape, (3, 2))
         self.assertEqual(second_shape, first_shape)
         self.assertEqual(uniform_shape, (3, 1))
+
+    def test_dmatrix_second_order_helper_uses_stable_unique_pairs(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        dust = templates.ReturnMBB1()
+        params = dmatrix._sorted_params(
+            [param for param in dust.free_symbols if param.name != "nu"]
+        )
+
+        terms = dmatrix._build_component_terms(dust, params, max_order=2)
+
+        self.assertEqual([param.name for param in params], ["T_d1", "beta_d"])
+        self.assertEqual(len(terms), 6)
+        self.assertEqual(terms[0], dust)
+        expected_first_order = [
+            sympy.simplify(sympy.diff(dust, params[0])),
+            sympy.simplify(sympy.diff(dust, params[1])),
+        ]
+        self.assertEqual(terms[1:3], expected_first_order)
+        expected_second_order = [
+            sympy.simplify(sympy.diff(dust, params[0], params[0])),
+            sympy.simplify(sympy.diff(dust, params[0], params[1])),
+            sympy.simplify(sympy.diff(dust, params[1], params[1])),
+        ]
+        self.assertEqual(terms[3:], expected_second_order)
 
 
 if __name__ == "__main__":

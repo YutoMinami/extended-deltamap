@@ -163,6 +163,12 @@ The most useful example configs are:
 - `examples/Dust_var_9freq_r1e-2.ini`
   Dust-only 9-band setup using all channels from `100 GHz` through `402 GHz`,
   closer to the band selection discussed in the paper.
+- `examples/LTD_config_sections.ini`
+  New-section version of the shared simulation config, provided as a migration
+  example for `[instrument]`, `[foreground]`, and `[simulation]`.
+- `examples/Dust_var_9freq_r1e-2_sections.ini`
+  New-section version of the 9-band dust-only fit config, provided as a
+  migration example for `[fit]`, `[templates]`, and `[io]`.
 
 In practice, the `ini` format matters less than keeping the examples readable
 and safe to run. To help with that, `examples/TestDeltamap.py` now performs

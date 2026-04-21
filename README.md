@@ -67,6 +67,15 @@ export DELTAMAP_DUST_BETA_MAP=/path/to/dust_beta.fits
 export DELTAMAP_DUST_TEMP_MAP=/path/to/dust_temp.fits
 ```
 
+For example, PySM-compatible dust parameter maps can be used for these values.
+If you keep local copies under this repository, a setup such as the following is
+fine:
+
+```bash
+export DELTAMAP_DUST_BETA_MAP=$PWD/data/pysm_2/dust_beta.fits
+export DELTAMAP_DUST_TEMP_MAP=$PWD/data/pysm_2/dust_temp.fits
+```
+
 If you keep local large files inside this repository, `data/` is already
 gitignored.
 

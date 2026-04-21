@@ -62,6 +62,7 @@ class Covariance:
         return numpy.exp(-(ell * (ell + 1) - s**2) * pow(sigma_b, 2) / 2)
 
     def CreateUnmaskedIndices(self):
+        """Collect the pixel indices kept by the optional mask."""
         if self.maskname is not None:
             self.mask = healpy.read_map(self.maskname, field=(0))
             self.mask = healpy.ud_grade(self.mask, nside_out=self.nside)
@@ -72,6 +73,7 @@ class Covariance:
             self.size = len(self.indices)
 
     def CreateAngles(self):
+        """Compute angular coordinates for all retained pixels."""
         self.angles = numpy.asarray(healpy.pix2ang(self.nside, self.indices)).transpose()
         self.m_indices = numpy.arange(len(self.angles))
 
@@ -96,6 +98,7 @@ class Covariance:
         self.cl_tensor_file = tensorcl
 
     def ReturnAlphalm(self, ell, m, theta, plus=True):
+        """Return the spin-weighted ``alpha_lm`` helper coefficient."""
         sgn = -1.0 if plus else 1.0
         alphalm = (2 * pow(m, 2) - ell * (ell + 1)) / pow(numpy.sin(theta), 2)
         alphalm += sgn * 2.0 * m * (ell - 1) / numpy.tan(theta) / numpy.sin(theta)
@@ -103,6 +106,7 @@ class Covariance:
         return alphalm
 
     def ReturnBetalm(self, ell, m, theta, plus=True):
+        """Return the spin-weighted ``beta_lm`` helper coefficient."""
         sgn = 1.0 if plus else -1.0
         betalm = (
             2.0
@@ -112,6 +116,7 @@ class Covariance:
         return betalm
 
     def ReturnNlmArray(self):
+        """Return normalization factors for every cached ``(ell, m)`` pair."""
         consts = numpy.full(len(self.lvec), 4)
         nlm = numpy.full(len(self.lvec), 1.0 / perm(self.lvec + 2, consts, exact=False))
         mask = self.mvec > 0
@@ -121,6 +126,7 @@ class Covariance:
         return 2.0 * numpy.sqrt(nlm)
 
     def ReturnNlm(self, ell, m):
+        """Return the scalar normalization for one ``(ell, m)`` mode."""
         value = 1.0 / perm(ell + 2, 4, exact=True)
         if m > 0:
             value /= perm(ell + m, 2 * m, exact=True)
@@ -134,6 +140,7 @@ class Covariance:
         )
 
     def ReturnF1lmArray(self, thetas, Plms_first, Plms_second):
+        """Return the cached ``F1`` spin-weighted harmonic factors."""
         first = (
             -1.0
             * ((self.lvec - pow(self.mvec, 2)) / pow(numpy.sin(thetas), 2) + self.lvec * (self.lvec - 1) / 2.0)
@@ -143,6 +150,7 @@ class Covariance:
         return first + second
 
     def ReturnF1lm(self, ell, m, theta):
+        """Return the ``F1`` spin-weighted harmonic factor for one mode."""
         first = (
             -1.0
             * ((ell - pow(m, 2)) / pow(numpy.sin(theta), 2) + ell * (ell - 1) / 2.0)
@@ -158,17 +166,20 @@ class Covariance:
         return self.ReturnNlm(int(ell), int(m)) * (first + second)
 
     def ReturnF2lmArray(self, thetas, Plms_first, Plms_second):
+        """Return the cached ``F2`` spin-weighted harmonic factors."""
         first = -1.0 * (self.lvec - 1) * numpy.cos(thetas) * Plms_first
         second = (self.lvec + self.mvec) * Plms_second
         coeff = self.mvec / pow(numpy.sin(thetas), 2)
         return coeff * (first + second)
 
     def ReturnF2lm(self, ell, m, theta):
+        """Return the ``F2`` spin-weighted harmonic factor for one mode."""
         first = -1.0 * (ell - 1) * numpy.cos(theta) * lpmv(int(m), int(ell), numpy.cos(theta))
         second = (ell + m) * lpmv(int(m), int(ell - 1), numpy.cos(theta)) if abs(m) <= (ell - 1) else 0.0
         return self.ReturnNlm(int(ell), int(m)) * m / pow(numpy.sin(theta), 2) * (first + second)
 
     def ReturnWorX(self, ell, m, theta, phi, isW=True):
+        """Return either the W or X spin-weighted basis value for one mode."""
         if abs(m) > ell:
             raise ValueError("|m| must be less than or equal to ell.")
         if ell <= 1:
@@ -184,6 +195,7 @@ class Covariance:
             return 1.0j * coeff * self.ReturnF2lm(ell, m, theta)
 
     def Return2Ylm(self, ell, m, theta, phi, plus=True):
+        """Return the spin-2 spherical harmonic value for one mode."""
         if abs(m) > ell:
             raise ValueError("|m| must be less than or equal to ell.")
         if ell <= 1:
@@ -214,14 +226,17 @@ class Covariance:
         return numpy.sqrt(factorial(ell - 2, True) / factorial(ell + 2, True)) * (aterm + bterm)
 
     def ReturnWlm(self, ell, m, theta, phi):
+        """Return the W basis value for one harmonic mode."""
         # return numpy.sqrt(2.)*(self.Return2Ylm(ell, m, theta, phi, plus = True) + self.Return2Ylm(ell, m, theta, phi, plus = False ) )/2.
         return self.ReturnWorX(ell, m, theta, phi, True)
 
     def ReturnXlm(self, ell, m, theta, phi):
+        """Return the X basis value for one harmonic mode."""
         # return numpy.sqrt(2.)*1.0j*(self.Return2Ylm(ell, m, theta, phi, plus = True) - self.Return2Ylm(ell, m, theta, phi, plus = False ) )/2.
         return self.ReturnWorX(ell, m, theta, phi, False)
 
     def ReturnWi(self, index):
+        """Return all W basis values for one retained pixel."""
         angle = (self.angles[index][0], self.angles[index][1])
         Wi = []
         for ell in range(2, self.lmax + 1, 1):
@@ -232,6 +247,7 @@ class Covariance:
         return Wi
 
     def ReturnXi(self, index):
+        """Return all X basis values for one retained pixel."""
         angle = (self.angles[index][0], self.angles[index][1])
         Xi = []
         for ell in range(2, self.lmax + 1, 1):
@@ -242,6 +258,7 @@ class Covariance:
         return Xi
 
     def PrepareVec(self):
+        """Cache flattened ``ell`` and ``m`` index vectors for later sums."""
         self.lvec = numpy.zeros(int((self.lmax - self.lmin + 1) * (self.lmax + self.lmin + 1)))
         self.mvec = numpy.copy(self.lvec)
 
@@ -255,6 +272,7 @@ class Covariance:
             print(" mvec ", self.mvec)
 
     def CalcWandXarray(self):
+        """Precompute W and X basis arrays for all retained pixels."""
         self.Warray = numpy.zeros((len(self.m_indices), len(self.lvec)), dtype="complex128")
         self.Xarray = numpy.zeros((len(self.m_indices), len(self.lvec)), dtype="complex128")
         self.Nlmarray = self.ReturnNlmArray()
@@ -277,10 +295,12 @@ class Covariance:
             self.Xarray[idx] = 1.0j * coeff * self.Nlmarray * F2lmarray
 
     def CalcWi(self):
+        """Cache the explicit W basis lists for each retained pixel."""
         self.Wi = [self.ReturnWi(idx) for idx in self.m_indices]
         # self.ReturnWi(self.m_indices)
 
     def CalcXi(self):
+        """Cache the explicit X basis lists for each retained pixel."""
         self.Xi = [self.ReturnXi(idx) for idx in self.m_indices]
         # self.Xi =self.ReturnXi(self.m_indices)
 
@@ -315,6 +335,7 @@ class Covariance:
         self.cl_tensor = self.read_cell(self.cl_tensor_file, self.nside, False)
 
     def ReturnEllSum(self, YY):
+        """Sum a mode array over ``m`` for each multipole ``ell``."""
         YYl = numpy.zeros((YY.shape[0], YY.shape[1], self.lmax - self.lmin + 1), dtype=numpy.complex128)
         for idx, ell in enumerate(range(self.lmin, self.lmax + 1, 1)):
             YYl[:, :, idx] = numpy.sum(
@@ -323,6 +344,7 @@ class Covariance:
         return YYl
 
     def ReturnWWlArray(self, i, j):
+        """Return the ``WW_l`` spectrum between two retained pixels."""
         WWarray = self.Warray[i] * numpy.conjugate(self.Warray[j])
 
         WWl = numpy.zeros(self.lmax - self.lmin + 1, dtype=numpy.complex128)
@@ -333,6 +355,7 @@ class Covariance:
         return WWl
 
     def ReturnXXlArray(self, i, j):
+        """Return the ``XX_l`` spectrum between two retained pixels."""
         XXarray = self.Xarray[i] * numpy.conjugate(self.Xarray[j])
 
         XXl = numpy.zeros(self.lmax - self.lmin + 1, dtype=numpy.complex128)
@@ -343,6 +366,7 @@ class Covariance:
         return XXl
 
     def ReturnWXlArray(self, i, j):
+        """Return the ``WX_l`` spectrum between two retained pixels."""
         WXarray = self.Warray[i] * numpy.conjugate(self.Xarray[j])
 
         WXl = numpy.zeros(self.lmax - self.lmin + 1, dtype=numpy.complex128)
@@ -353,6 +377,7 @@ class Covariance:
         return WXl
 
     def ReturnXWlArray(self, i, j):
+        """Return the ``XW_l`` spectrum between two retained pixels."""
         XWarray = self.Xarray[i] * numpy.conjugate(self.Warray[j])
 
         XWl = numpy.zeros(self.lmax - self.lmin + 1, dtype=numpy.complex128)
@@ -363,6 +388,7 @@ class Covariance:
         return XWl
 
     def ReturnWWl(self, i, j):
+        """Return the summed ``WW_l`` values using cached list representations."""
         Wi = self.Wi[i]
         Wj = self.Wi[j]
         # WWl = [ numpy.real( sum(Wil *  numpy.conjugate(Wjl)  )  ) for Wil,Wjl in zip(Wi,Wj)  ]
@@ -370,6 +396,7 @@ class Covariance:
         return WWl
 
     def ReturnXXl(self, i, j):
+        """Return the summed ``XX_l`` values using cached list representations."""
         Xi = self.Xi[i]
         Xj = self.Xi[j]
         # XXl = [ numpy.real( sum(Xil *  numpy.conjugate(Xjl)  )      ) for Xil,Xjl in zip(Xi,Xj)  ]
@@ -377,6 +404,7 @@ class Covariance:
         return XXl
 
     def ReturnWXl(self, i, j):
+        """Return the summed ``WX_l`` values using cached list representations."""
         Wi = self.Wi[i]
         Xj = self.Xi[j]
         # WXl = [ numpy.real( sum(Wil *  numpy.conjugate(Xjl)  )      ) for Wil,Xjl in zip(Wi,Xj)  ]
@@ -384,6 +412,7 @@ class Covariance:
         return WXl
 
     def ReturnXWl(self, i, j):
+        """Return the summed ``XW_l`` values using cached list representations."""
         Xi = self.Xi[i]
         Wj = self.Wi[j]
         # XWl = [ numpy.real( sum(Xil *  numpy.conjugate(Wjl)  )      ) for Xil,Wjl in zip(Xi,Wj)  ]
@@ -391,6 +420,7 @@ class Covariance:
         return XWl
 
     def CalcCovArray(self, Cl):
+        """Compute covariance blocks with explicit ``ell``-wise tensor arrays."""
         self.QQ = numpy.zeros(shape=(self.size, self.size), dtype="float64")
         self.UU = numpy.zeros(shape=(self.size, self.size), dtype="float64")
         self.QU = numpy.zeros(shape=(self.size, self.size), dtype="float64")
@@ -479,6 +509,7 @@ class Covariance:
 	"""
 
     def CalcCov(self, Cl):
+        """Compute covariance blocks with pairwise loops over retained pixels."""
         self.QQ = numpy.zeros(shape=(self.size, self.size), dtype="float64")
         self.UU = numpy.zeros(shape=(self.size, self.size), dtype="float64")
         self.QU = numpy.zeros(shape=(self.size, self.size), dtype="float64")

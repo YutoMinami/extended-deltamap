@@ -26,6 +26,7 @@ class SafeDict(dict[str, Any]):
     """Dictionary that leaves unknown format keys untouched."""
 
     def __missing__(self, key: str) -> str:
+        """Return the original placeholder text for unknown format keys."""
         return "{" + key + "}"
 
 

@@ -1,6 +1,9 @@
 # TODO
 
 ## Active
+- Finish the in-progress `DMatrix` API cleanup so `PrepareDMatrix(order=...)`
+  becomes the public entry point for 0th-, 1st-, and future 2nd-order builds,
+  while `dim_params` always matches the actual column count.
 - When finalizing supported SciPy versions, confirm that the `sph_harm` compatibility shim still matches the intended API and numerical behavior.
 
 ## Backlog
@@ -38,6 +41,21 @@
 
 ## Future methodology update: second-order Delta-map expansion
 - Design the second-order foreground expansion before changing `extended_deltamap/dmatrix.py`; this is a future methodology update, not part of the current bug-fix pass.
+- Agreed design direction so far:
+  Taylor-series coefficients such as `1/2` should be absorbed on the sky-side
+  unknowns, not into the frequency-space derivative columns.
+- Agreed design direction so far:
+  mixed derivatives should appear only once per unordered parameter pair.
+- Agreed design direction so far:
+  derivative multi-indices should follow parameter-name order.
+- Agreed design direction so far:
+  component ordering should continue to follow the current convention
+  (`dust` block first, then `synchrotron` block).
+- Agreed design direction so far:
+  `PrepareOneDiffDMatrix()` should remain a first-derivative inspection helper.
+- Agreed design direction so far:
+  `PrepareUniformDMatrix()` can remain as a compatibility wrapper around
+  `PrepareDMatrix(order=0)`.
 - When extending beyond first order, generate the basis terms fresh for each build while still allowing the current build step to append 0th-, 1st-, and future 2nd-order terms in a controlled order.
 - Include both pure second derivatives and mixed derivatives for multi-parameter models, e.g. for dust with `beta_d` and `T_d1` or `x^R` include:
   `∂²f/∂beta_d²`, `∂²f/∂T_d1²`, and `∂²f/(∂beta_d ∂T_d1)`.

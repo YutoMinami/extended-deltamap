@@ -158,9 +158,13 @@ paths defined in the config files.
 ## Development notes
 
 - The repository currently uses `uv.lock` for dependency reproducibility.
+- Smoke and regression checks currently live under `tests/` and run with:
+  `uv run python -m unittest discover -s tests -v`
 - The active refactor notes live in `TODO.md`.
 - Repo-local working agreements for automated contributors live in `AGENTS.md`.
 - Current handoff notes for future work live in `HANDOFF.md`.
+- A local Japanese design note for second-order Delta-map work can be kept under
+  `data/notes/`; this directory is gitignored on purpose.
 
 ## Current status
 

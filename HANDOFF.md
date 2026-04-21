@@ -3,77 +3,94 @@
 ## Current branch
 - `feature/fix-deltamap-main-entrypoint`
 
-## What changed
-- Fixed the `extended_deltamap.deltamap` module entrypoint by adding the missing `sys` import so `uv run python -m extended_deltamap.deltamap` no longer fails with `NameError`.
-- Added `pyproject.toml` for setuptools-based packaging with `uv` support.
-- Set `requires-python = ">=3.12"` and added `.python-version` with `3.12`.
-- Created a real package directory at `extended_deltamap/`.
-- Copied the core modules into the package:
-  `extended_deltamap/deltamap.py`,
-  `extended_deltamap/dmatrix.py`,
-  `extended_deltamap/covariance.py`,
-  `extended_deltamap/templates.py`.
-- Added `extended_deltamap/__init__.py` exporting `Covariance`, `DeltaMap`, `DMatrix`, and `Templates`.
-- Bundled the two theory spectrum `.dat` files into `extended_deltamap/files/` and registered them in `pyproject.toml`.
-- Updated `README.md` to describe `uv` usage and Python 3.12.
-- Updated `examples/TestDeltamap.py` to import from `extended_deltamap` instead of relying on `sys.path.append('../')`.
-- Updated `examples/TestDeltamap.py` and `examples/run_pysm3.py` so config-relative paths work from the repo root, not only from inside `examples/`.
-- Replaced hard-coded research-cluster FITS paths in `examples/TestDeltamap.py` with environment variables:
-  `DELTAMAP_DUST_BETA_MAP`
-  `DELTAMAP_DUST_TEMP_MAP`
-- Added `.gitignore` for `.venv` and Python cache files.
-- Added a SciPy compatibility shim in `extended_deltamap/covariance.py` so Python 3.12 + current SciPy resolves spherical harmonics correctly.
-- Removed the legacy top-level modules and duplicate root-level bundled spectra so `extended_deltamap/` is now the only source of package code and theory data.
-- Generated `uv.lock`.
+## Current state
+- The package layout is in place under `extended_deltamap/` and the main
+  example workflows run from the repo root with `uv`.
+- The README now documents the reference paper and the map-to-likelihood
+  pipeline at a higher level.
+- Basic smoke/regression checks exist under `tests/test_smoke.py`.
+- Local end-to-end checks were completed with the bundled local dust FITS files
+  under `data/pysm_2/`.
+- There is active in-progress work in `extended_deltamap/dmatrix.py` to turn
+  `PrepareDMatrix(order=...)` into the public order-aware API for future
+  second-order expansion support.
 
-## Environment status
-- A local uv virtual environment exists at `.venv/`.
-- It was created with:
-  `uv venv .venv --python 3.12 --prompt delta-map`
-- `uv sync` completed successfully in this repository.
-- `uv run python` package import check passed after the SciPy compatibility fix.
+## What has been completed on this branch
+- Fixed the `extended_deltamap.deltamap` module entrypoint by adding the missing
+  `sys` import.
+- Fixed `examples/TestDeltamap.py` so cached `anoise_freq` arrays are actually
+  reused instead of being regenerated after load.
+- Clarified the paper's artificial-noise split in code comments:
+  common artificial noise for the CMB-side shared component and
+  per-frequency artificial noise for the instrument-side channel component.
+- Made `extended_deltamap/dmatrix.py` rebuild its template columns from a fresh
+  list so repeated matrix preparation no longer accumulates duplicate columns.
+- Added smoke/regression tests covering:
+  package import,
+  the fixed module entrypoint,
+  one minimal covariance build,
+  and repeated `DMatrix` rebuild behavior.
+- Confirmed these commands complete successfully in the local environment:
+  `uv run python -m unittest discover -s tests -v`
+  `uv run python examples/run_pysm3.py examples/LTD_config.ini`
+  `uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_r1e-2.ini 1`
+  with
+  `DELTAMAP_DUST_BETA_MAP=data/pysm_2/dust_beta.fits`
+  `DELTAMAP_DUST_TEMP_MAP=data/pysm_2/dust_temp.fits`
+
+## Current in-progress code changes
+- `extended_deltamap/dmatrix.py`
+  Work is underway to:
+  expose `PrepareDMatrix(order=...)`,
+  make `PrepareUniformDMatrix()` a compatibility wrapper,
+  and redefine `dim_params` so it matches the actual number of generated
+  columns at the chosen expansion order.
+- This work is not committed yet in the current worktree.
+
+## Second-order design decisions already agreed
+- Taylor-series coefficients such as `1/2` should be absorbed on the sky-side
+  unknowns rather than into the frequency-space derivative columns.
+- Mixed derivatives should appear only once per unordered parameter pair.
+- Derivative multi-indices should follow parameter-name order.
+- Component block order should stay aligned with the current implementation:
+  `dust` block first, then `synchrotron` block.
+- `PrepareOneDiffDMatrix()` should remain a first-derivative inspection helper.
+- `PrepareUniformDMatrix()` can remain for compatibility, but should conceptually
+  map to `PrepareDMatrix(order=0)`.
+
+## Local design notes
+- A gitignored Japanese design memo for the second-order work lives at:
+  [SECOND_ORDER_DELTAMAP_JA.md](/home/yminami/workdir/DeltaMap/extended-deltamap/data/notes/SECOND_ORDER_DELTAMAP_JA.md:1)
+- Because it is under `data/`, it is not tracked by git.
 
 ## Known limitations
-- The package layout is improved, but the repository has not been fully normalized around `src/` layout or CLI entry points.
 - `examples/TestDeltamap.py` is still large and research-script shaped.
-- End-to-end scientific validation was not completed in this session because the external FITS inputs are not bundled in the repository.
-- `uv.lock` exists but still needs a normal review and commit with the rest of the branch changes.
-- A code-vs-paper review found several likely bugs that still need implementation work:
-  `examples/TestDeltamap.py` appears to regenerate `anoise_freq` even when a cached file was loaded, which breaks reproducibility.
-  `extended_deltamap/dmatrix.py` accumulates columns across repeated matrix-preparation calls because `D_matrix_template` is not reset.
-  The handling of the shared `anoise` term may be inconsistent between the simulated maps and the covariance model, so it should be checked against the intended likelihood assumptions in the paper.
+- There is not yet a committed public API for second-order Delta-map expansion;
+  only the groundwork and design notes exist so far.
+- The SciPy `sph_harm` compatibility shim works in the current environment, but
+  supported-version policy still needs to be finalized.
+- `uv.lock` exists locally and is used, but still needs a normal review and
+  commit decision.
 
 ## Suggested next steps
-1. Fix the remaining review findings in `examples/TestDeltamap.py`, `extended_deltamap/deltamap.py`, and `extended_deltamap/dmatrix.py`.
-2. Add regression tests for the module entrypoint, D-matrix rebuild behavior, and prior accumulation.
-3. Run the example workflows with real external FITS inputs and confirm the path changes behave as intended.
-4. Review and commit `uv.lock`.
+1. Finish the in-progress `DMatrix` API cleanup and add tests for
+   `PrepareDMatrix(order=0|1|2)` and `dim_params`.
+2. Compare generated second-order dust/synch columns against the local design
+   memo before touching `DeltaMap` likelihood code.
+3. Decide whether to commit `uv.lock`.
+4. Continue doc cleanup once the second-order API direction settles.
 
 ## Useful commands
-- Create or refresh the environment:
-  `uv venv .venv --python 3.12 --prompt delta-map`
-- Install default dependencies:
-  `uv sync`
-- Install optional PySM support:
-  `uv sync --extra pysm`
-- Activate the environment:
-  `source .venv/bin/activate`
-- Run a package import smoke check:
-  `uv run python - <<'PY'
-import extended_deltamap
-from extended_deltamap import DeltaMap, DMatrix, Covariance, Templates
-print(extended_deltamap.__all__)
-PY`
-- Run the PySM example:
+- Run smoke/regression tests:
+  `uv run python -m unittest discover -s tests -v`
+- Run the PySM map-generation example:
   `uv run python examples/run_pysm3.py examples/LTD_config.ini`
-- Run the fit example:
-  `export DELTAMAP_DUST_BETA_MAP=/path/to/dust_beta.fits`
-  `export DELTAMAP_DUST_TEMP_MAP=/path/to/dust_temp.fits`
-  `uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_r1e-2.ini 1`
+- Run the fit example with local dust FITS files:
+  `DELTAMAP_DUST_BETA_MAP=data/pysm_2/dust_beta.fits DELTAMAP_DUST_TEMP_MAP=data/pysm_2/dust_temp.fits uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_r1e-2.ini 1`
 
 ## Files most relevant to continue from here
-- [pyproject.toml](/home/yminami/workdir/DeltaMap/extended-deltamap/pyproject.toml:1)
 - [README.md](/home/yminami/workdir/DeltaMap/extended-deltamap/README.md:1)
+- [TODO.md](/home/yminami/workdir/DeltaMap/extended-deltamap/TODO.md:1)
 - [examples/TestDeltamap.py](/home/yminami/workdir/DeltaMap/extended-deltamap/examples/TestDeltamap.py:1)
-- [examples/run_pysm3.py](/home/yminami/workdir/DeltaMap/extended-deltamap/examples/run_pysm3.py:1)
-- [extended_deltamap/covariance.py](/home/yminami/workdir/DeltaMap/extended-deltamap/extended_deltamap/covariance.py:1)
+- [extended_deltamap/dmatrix.py](/home/yminami/workdir/DeltaMap/extended-deltamap/extended_deltamap/dmatrix.py:1)
+- [tests/test_smoke.py](/home/yminami/workdir/DeltaMap/extended-deltamap/tests/test_smoke.py:1)

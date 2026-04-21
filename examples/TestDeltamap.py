@@ -387,18 +387,6 @@ def return_map_with_noise_cov(
         else:
             random_freq_anoise = numpy.load(anoise_freq_name)
             print("read old anoise freq  map")
-
-            random_anoise = return_anoise_map(anoise, nside, nonzero_len)
-            if not os.path.exists(anoise_name):
-                numpy.save(anoise_name, random_anoise)
-
-        if fgnoise_fac is None:
-            random_freq_anoise = return_anoise_map(anoise, nside, nonzero_len)
-            # random_freq_anoise = numpy.random.randn(nonzero_len) * asigma
-        else:
-            random_freq_anoise = return_anoise_map(noise / fgnoise_fac, nside, nonzero_len)
-            # noise_sigma_freq = return_noise_sigma(noise / fgnoise_fac, nside)
-            # random_freq_anoise = numpy.random.randn(nonzero_len) * noise_sigma_freq
         mvec_each += random_freq_anoise
 
         mvec.append(mvec_each)

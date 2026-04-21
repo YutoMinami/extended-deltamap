@@ -60,13 +60,38 @@ class DMatrix:
         self.width = numpy.asarray(width)
         self.n_freqs = len(freqs)
 
+    def _build_template_terms(self, diff_param=None):
+        """Build one fresh list of symbolic template terms for the current settings.
+
+        Args:
+            diff_param: Optional parameter-name fragment used to keep only one
+                subset of first-derivative columns.
+
+        Returns:
+            A newly built list of symbolic basis terms.
+        """
+        template_terms = []
+        for func, params in zip(self.d_funcs, self.d_params):
+            template_terms.append(func)
+            for param in params:
+                if diff_param is not None and diff_param not in param.name:
+                    continue
+                template_terms.append(sympy.simplify(sympy.diff(func, param)))
+            # Future second-order work should append terms here in a stable
+            # order, including mixed derivatives when models have >1 parameter.
+        return template_terms
+
+    def _evaluate_template_terms(self, template_terms):
+        """Evaluate symbolic template terms at each configured frequency."""
+        l_Dmatrix = []
+        for nu in self.freqs:
+            nu_D = [func.subs("nu", nu) for func in template_terms]
+            l_Dmatrix.append(nu_D)
+        return l_Dmatrix
+
     def DiffD(self):
         """Populate the template with each component and its parameter derivatives."""
-        # differentiate D
-        for func, params in zip(self.d_funcs, self.d_params):
-            self.D_matrix_template.append(func)
-            for param in params:
-                self.D_matrix_template.append(sympy.simplify(sympy.diff(func, param)))
+        self.D_matrix_template = self._build_template_terms()
 
     def PrepareOneDiffDMatrix(self, diff_param):
         """Build a matrix that includes derivatives for one selected parameter.
@@ -75,17 +100,8 @@ class DMatrix:
             diff_param: Parameter-name fragment used to choose which derivative
                 columns to include.
         """
-        for func, params in zip(self.d_funcs, self.d_params):
-            self.D_matrix_template.append(func)
-            for param in params:
-                if diff_param in param.name:
-                    self.D_matrix_template.append(sympy.simplify(sympy.diff(func, param)))
-                else:
-                    continue
-        l_Dmatrix = []
-        for nu in self.freqs:
-            nu_D = [func.subs("nu", nu) for func in self.D_matrix_template]
-            l_Dmatrix.append(nu_D)
+        self.D_matrix_template = self._build_template_terms(diff_param=diff_param)
+        l_Dmatrix = self._evaluate_template_terms(self.D_matrix_template)
         if self.verbose:
             print(self.dim_params, self.n_freqs)
             print((l_Dmatrix))
@@ -93,12 +109,10 @@ class DMatrix:
 
     def PrepareUniformDMatrix(self):
         """Build a matrix with component amplitudes only, without derivatives."""
+        self.D_matrix_template = []
         for func, params in zip(self.d_funcs, self.d_params):
             self.D_matrix_template.append(func)
-        l_Dmatrix = []
-        for nu in self.freqs:
-            nu_D = [func.subs("nu", nu) for func in self.D_matrix_template]
-            l_Dmatrix.append(nu_D)
+        l_Dmatrix = self._evaluate_template_terms(self.D_matrix_template)
         if self.verbose:
             print(self.dim_params, self.n_freqs)
             print((l_Dmatrix))
@@ -107,10 +121,7 @@ class DMatrix:
     def PrepareDMatrix(self):
         """Build the full symbolic D matrix including parameter derivatives."""
         self.DiffD()
-        l_Dmatrix = []
-        for nu in self.freqs:
-            nu_D = [func.subs("nu", nu) for func in self.D_matrix_template]
-            l_Dmatrix.append(nu_D)
+        l_Dmatrix = self._evaluate_template_terms(self.D_matrix_template)
         if self.verbose:
             print(self.dim_params, self.n_freqs)
             print((l_Dmatrix))

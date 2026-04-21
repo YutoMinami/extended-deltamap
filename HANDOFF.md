@@ -1,9 +1,10 @@
 # HANDOFF
 
 ## Current branch
-- `feature/package-layout`
+- `feature/fix-deltamap-main-entrypoint`
 
 ## What changed
+- Fixed the `extended_deltamap.deltamap` module entrypoint by adding the missing `sys` import so `uv run python -m extended_deltamap.deltamap` no longer fails with `NameError`.
 - Added `pyproject.toml` for setuptools-based packaging with `uv` support.
 - Set `requires-python = ">=3.12"` and added `.python-version` with `3.12`.
 - Created a real package directory at `extended_deltamap/`.
@@ -37,12 +38,16 @@
 - `examples/TestDeltamap.py` is still large and research-script shaped.
 - End-to-end scientific validation was not completed in this session because the external FITS inputs are not bundled in the repository.
 - `uv.lock` exists but still needs a normal review and commit with the rest of the branch changes.
+- A code-vs-paper review found several likely bugs that still need implementation work:
+  `examples/TestDeltamap.py` appears to regenerate `anoise_freq` even when a cached file was loaded, which breaks reproducibility.
+  `extended_deltamap/dmatrix.py` accumulates columns across repeated matrix-preparation calls because `D_matrix_template` is not reset.
+  The handling of the shared `anoise` term may be inconsistent between the simulated maps and the covariance model, so it should be checked against the intended likelihood assumptions in the paper.
 
 ## Suggested next steps
-1. Run the example workflows with real external FITS inputs and confirm the path changes behave as intended.
-2. Add smoke tests for import and one minimal computation path.
-3. Review and commit `uv.lock`.
-4. If the examples are meant to remain supported, consider moving them toward CLI entry points or a small `scripts/` layer.
+1. Fix the remaining review findings in `examples/TestDeltamap.py`, `extended_deltamap/deltamap.py`, and `extended_deltamap/dmatrix.py`.
+2. Add regression tests for the module entrypoint, D-matrix rebuild behavior, and prior accumulation.
+3. Run the example workflows with real external FITS inputs and confirm the path changes behave as intended.
+4. Review and commit `uv.lock`.
 
 ## Useful commands
 - Create or refresh the environment:

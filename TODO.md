@@ -1,12 +1,9 @@
 # TODO
 
 ## Active
-- Add a regression test to cover the already-fixed `extended_deltamap.deltamap` module entrypoint import bug.
 - Run an end-to-end check with:
   `uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_r1e-2.ini 1`
-- Run an end-to-end check with:
-  `uv run python examples/run_pysm3.py examples/LTD_config.ini`
-- Add at least a smoke-test suite that verifies package import, bundled data access, and one minimal covariance calculation under Python 3.12.
+  once `DELTAMAP_DUST_BETA_MAP` and `DELTAMAP_DUST_TEMP_MAP` are set to real FITS inputs.
 - Confirm that the new SciPy compatibility shim for `sph_harm` behaves correctly on the exact SciPy versions the team plans to support.
 
 ## Backlog
@@ -38,6 +35,8 @@
 - Fixed `examples/TestDeltamap.py` additional-noise generation so cached `anoise_freq` inputs are reused instead of being unconditionally regenerated after load.
 - Updated `extended_deltamap/dmatrix.py` so repeated `PrepareDMatrix()`-style calls rebuild from a fresh template while keeping room for future higher-order derivative terms.
 - Clarified the intended artificial-noise split in `examples/TestDeltamap.py`: common artificial noise for CMB and per-frequency artificial noise for instrument.
+- Added a `unittest` smoke/regression suite covering package import, the fixed `extended_deltamap.deltamap` module entrypoint, one minimal covariance build, and repeated `DMatrix` rebuilds.
+- Confirmed that `uv run python examples/run_pysm3.py examples/LTD_config.ini` completes successfully in the local environment.
 
 ## Future methodology update: second-order Delta-map expansion
 - Design the second-order foreground expansion before changing `extended_deltamap/dmatrix.py`; this is a future methodology update, not part of the current bug-fix pass.

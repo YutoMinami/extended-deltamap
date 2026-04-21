@@ -40,15 +40,12 @@ class DMatrix:
             f_D: Symbolic frequency scaling function containing ``nu`` and any
                 fit parameters.
         """
-        # count params
         symbols = f_D.free_symbols
         params = []
-        self.dim_params += 1
         for param in symbols:
             if "nu" not in param.name:
-                self.dim_params += 1
                 params.append(param)
-        self.d_params.append(params)
+        self.d_params.append(self._sorted_params(params))
         self.d_funcs.append(f_D)
 
     def SetFreqs(self, freqs, width):
@@ -130,9 +127,24 @@ class DMatrix:
             l_Dmatrix.append(nu_D)
         return l_Dmatrix
 
-    def DiffD(self):
-        """Populate the template with each component and its parameter derivatives."""
-        self.D_matrix_template = self._build_template_terms()
+    def _set_matrix_from_template_terms(self, template_terms):
+        """Store evaluated template terms and keep ``dim_params`` in sync."""
+        self.D_matrix_template = template_terms
+        self.dim_params = len(template_terms)
+        l_Dmatrix = self._evaluate_template_terms(template_terms)
+        if self.verbose:
+            print(self.dim_params, self.n_freqs)
+            print((l_Dmatrix))
+        self.D_matrix = sympy.Matrix(l_Dmatrix)
+
+    def DiffD(self, order=1):
+        """Populate the template with each component and its derivatives.
+
+        Args:
+            order: Highest derivative order to include.
+        """
+        self.D_matrix_template = self._build_template_terms(max_order=order)
+        self.dim_params = len(self.D_matrix_template)
 
     def PrepareOneDiffDMatrix(self, diff_param):
         """Build a matrix that includes derivatives for one selected parameter.
@@ -141,33 +153,23 @@ class DMatrix:
             diff_param: Parameter-name fragment used to choose which derivative
                 columns to include.
         """
-        self.D_matrix_template = self._build_template_terms(diff_param=diff_param)
-        l_Dmatrix = self._evaluate_template_terms(self.D_matrix_template)
-        if self.verbose:
-            print(self.dim_params, self.n_freqs)
-            print((l_Dmatrix))
-        self.D_matrix = sympy.Matrix(l_Dmatrix)
+        self._set_matrix_from_template_terms(
+            self._build_template_terms(max_order=1, diff_param=diff_param)
+        )
 
     def PrepareUniformDMatrix(self):
         """Build a matrix with component amplitudes only, without derivatives."""
-        self.D_matrix_template = []
-        for func, params in zip(self.d_funcs, self.d_params):
-            self.D_matrix_template.append(func)
-        l_Dmatrix = self._evaluate_template_terms(self.D_matrix_template)
-        if self.verbose:
-            print(self.dim_params, self.n_freqs)
-            print((l_Dmatrix))
-        self.D_matrix = sympy.Matrix(l_Dmatrix)
+        self.PrepareDMatrix(order=0)
 
-    def PrepareDMatrix(self):
-        """Build the full symbolic D matrix including parameter derivatives."""
-        self.DiffD()
-        l_Dmatrix = self._evaluate_template_terms(self.D_matrix_template)
-        if self.verbose:
-            print(self.dim_params, self.n_freqs)
-            print((l_Dmatrix))
-        # self.D_matrix =sympy.Matrix(self.n_freqs, self.dim_params, l_Dmatrix)
-        self.D_matrix = sympy.Matrix(l_Dmatrix)
+    def PrepareDMatrix(self, order=1):
+        """Build the symbolic D matrix up to the requested derivative order.
+
+        Args:
+            order: Highest derivative order to include.
+        """
+        self._set_matrix_from_template_terms(
+            self._build_template_terms(max_order=order)
+        )
 
     def CalcDMatrix(self):
         """Placeholder for future explicit D-matrix evaluation logic."""

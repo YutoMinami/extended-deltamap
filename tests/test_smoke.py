@@ -97,6 +97,64 @@ class SmokeTests(unittest.TestCase):
         ]
         self.assertEqual(terms[3:], expected_second_order)
 
+    def test_prepare_dmatrix_order_controls_column_count_and_dim_params(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        dmatrix.AddD(templates.ReturnMBB1())
+        dmatrix.SetFreqs([40.0, 140.0], [None, None])
+
+        dmatrix.PrepareDMatrix(order=0)
+        self.assertEqual(dmatrix.D_matrix.shape, (2, 1))
+        self.assertEqual(dmatrix.dim_params, 1)
+
+        dmatrix.PrepareDMatrix(order=1)
+        self.assertEqual(dmatrix.D_matrix.shape, (2, 3))
+        self.assertEqual(dmatrix.dim_params, 3)
+
+        dmatrix.PrepareDMatrix(order=2)
+        self.assertEqual(dmatrix.D_matrix.shape, (2, 6))
+        self.assertEqual(dmatrix.dim_params, 6)
+
+    def test_prepare_uniform_dmatrix_matches_order_zero(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        dmatrix.AddD(templates.ReturnPowerLawSynch())
+        dmatrix.SetFreqs([30.0, 40.0, 90.0], [None, None, None])
+
+        dmatrix.PrepareUniformDMatrix()
+        uniform_matrix = dmatrix.D_matrix
+        uniform_dim = dmatrix.dim_params
+
+        dmatrix.PrepareDMatrix(order=0)
+        self.assertEqual(dmatrix.D_matrix, uniform_matrix)
+        self.assertEqual(uniform_dim, dmatrix.dim_params)
+        self.assertEqual(dmatrix.dim_params, 1)
+
+    def test_prepare_dmatrix_keeps_component_block_order(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        dust = templates.ReturnMBB1()
+        synch = templates.ReturnPowerLawSynch()
+        dmatrix.AddD(dust)
+        dmatrix.AddD(synch)
+        dmatrix.SetFreqs([40.0, 140.0], [None, None])
+
+        dmatrix.PrepareDMatrix(order=1)
+
+        dust_params = dmatrix._sorted_params(
+            [param for param in dust.free_symbols if param.name != "nu"]
+        )
+        synch_params = dmatrix._sorted_params(
+            [param for param in synch.free_symbols if param.name != "nu"]
+        )
+        expected_terms = (
+            dmatrix._build_component_terms(dust, dust_params, max_order=1)
+            + dmatrix._build_component_terms(synch, synch_params, max_order=1)
+        )
+
+        self.assertEqual(dmatrix.D_matrix_template, expected_terms)
+        self.assertEqual(dmatrix.dim_params, len(expected_terms))
+
 
 if __name__ == "__main__":
     unittest.main()

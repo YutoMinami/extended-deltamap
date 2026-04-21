@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "extended-deltamap"
+version = "0.1.0"
+description = "Foreground removal and CMB parameter estimation tools for DeltaMap analyses"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [
+  { name = "extended-deltamap contributors" }
+]
+dependencies = [
+  "astropy",
+  "healpy",
+  "iminuit",
+  "numpy",
+  "pysm3>=3.4.0",
+  "scipy",
+  "sympy",
+]
+
+[project.optional-dependencies]
+pysm = [
+  "pysm3",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["extended_deltamap*"]
+
+[tool.setuptools.package-data]
+extended_deltamap = ["files/*.dat"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.11",
+]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 88
+[tool.ruff.lint]
+select = ["E", "F", "I"]

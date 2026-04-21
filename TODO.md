@@ -1,8 +1,14 @@
 # TODO
 
+## Done
+- Fixed config-relative path handling so generated inputs, outputs, and resource paths resolve from the repo root and arbitrary working directories.
+- Fixed the `extended_deltamap.deltamap` module entrypoint so `uv run python -m extended_deltamap.deltamap` no longer fails due to a missing `sys` import.
+- Fixed `examples/TestDeltamap.py` additional-noise generation so cached `anoise_freq` inputs are reused instead of being unconditionally regenerated after load.
+- Updated `extended_deltamap/dmatrix.py` so repeated `PrepareDMatrix()`-style calls rebuild from a fresh template while keeping room for future higher-order derivative terms.
+- Clarified the intended artificial-noise split in `examples/TestDeltamap.py`: common artificial noise for CMB and per-frequency artificial noise for instrument.
+
 ## Current refactor plan
 - Silence current warnings, starting with `healpy` deprecation warnings around the `verbose` argument.
-- Fix path handling so generated inputs, outputs, and config-relative resources resolve consistently from the repo root and from arbitrary working directories.
 - Add type hints to the actively maintained code paths, prioritizing `examples/TestDeltamap.py`, `examples/run_pysm3.py`, and the public package modules.
 - Normalize formatting and style, including indentation cleanup and low-risk readability improvements.
 - Add Google-style docstrings to public classes, functions, and operational entry points.
@@ -25,9 +31,6 @@
 - Audit old commented-out blocks in `extended_deltamap/deltamap.py` and `extended_deltamap/covariance.py`; remove dead code where it no longer serves as research context.
 
 ## Bug fixes from code-vs-paper review
-- Fix `examples/TestDeltamap.py` additional-noise generation so cached `anoise_freq` inputs are actually reused and not unconditionally regenerated after load.
-- Revisit the statistical treatment of the extra `anoise` term in `examples/TestDeltamap.py`; the current simulation and covariance setup may be double-counting a shared-noise contribution across channels.
-- Make `extended_deltamap/dmatrix.py` reset `D_matrix_template` before rebuilding so repeated `PrepareDMatrix()` or related calls do not silently duplicate columns.
 - Add a regression test for the `extended_deltamap.deltamap` module entrypoint; the missing `sys` import bug was fixed on `feature/fix-deltamap-main-entrypoint`.
 
 ## Future methodology update: second-order Delta-map expansion

@@ -299,6 +299,8 @@ def return_map_with_noise_cov(
     anoise_scale = "{0:.1e}".format(anoise).replace(".", "p")
     anoise_name = anoise_template.format(nside, anoise_scale, seed)
     if re_noise or not os.path.exists(anoise_name):
+        # Paper artificial noise: add a common CMB-side realization so the
+        # shared covariance stays positive definite and invertible.
         random_anoise = return_anoise_map(anoise, nside, nonzero_len)
         if not os.path.exists(anoise_name):
             numpy.save(anoise_name, random_anoise)
@@ -378,6 +380,9 @@ def return_map_with_noise_cov(
         mvec_each += random_anoise
         anoise_freq_name = anoise_freq_template.format(nu_str, nside, seed)
         if re_noise or not os.path.exists(anoise_freq_name):
+            # Paper artificial noise: add one independent instrument-side
+            # realization per channel so each noise covariance remains
+            # positive definite and invertible.
             if fgnoise_fac is None:
                 random_freq_anoise = return_anoise_map(anoise, nside, nonzero_len)
             else:
@@ -523,6 +528,7 @@ def test_fg_with_noise_cov(
     s0_bsm = cov.ReturnCovMatrix(False)
 
     asigma = return_noise_sigma(anoise, nside)
+    # Match the common CMB-side artificial noise added in map generation.
     a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
     dmp.SetFgDmatrix(dmt)
@@ -697,7 +703,7 @@ def test_fg_with_noise_cov_xref(
     s0_sm = cov.ReturnCovMatrix(True)
     s0_bsm = cov.ReturnCovMatrix(False)
     asigma = return_noise_sigma(anoise, nside)
-    # a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
+    # Match the common CMB-side artificial noise added in map generation.
     a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
     dmp.SetFgDmatrix(dmt)

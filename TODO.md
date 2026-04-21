@@ -1,7 +1,7 @@
 # TODO
 
 ## Active
-- Confirm that the new SciPy compatibility shim for `sph_harm` behaves correctly on the exact SciPy versions the team plans to support.
+- When finalizing supported SciPy versions, confirm that the `sph_harm` compatibility shim still matches the intended API and numerical behavior.
 
 ## Backlog
 - Silence current warnings, starting with `healpy` deprecation warnings around the `verbose` argument.

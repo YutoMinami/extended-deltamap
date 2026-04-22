@@ -518,7 +518,7 @@ class DeltaMap:
             matrix_list.append(i_list)
 
         DTNID = numpy.block(matrix_list)
-        self.DNIDL = scipy.linalg.cholesky(DTNID, lower=True)
+        self.DNIDL = self.stable_cholesky(DTNID, lower=True)
 
         # self.H = (NI@D) @ ( scipy.linalg.cho_solve((self.DNIDL, True) , D.T @ NI) )
 
@@ -534,7 +534,7 @@ class DeltaMap:
         self.DTNIDc = numpy.block(matrix_list)
 
         DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve((self.AL, True), self.DTNIDc.T)
-        self.DT_SpNI_DL = scipy.linalg.cholesky(DT_SpNI_D, lower=True)
+        self.DT_SpNI_DL = self.stable_cholesky(DT_SpNI_D, lower=True)
 
         # def CalcDTNIM(self):
         matrix_list = []
@@ -747,9 +747,9 @@ class DeltaMap:
         # self.BL = scipy.linalg.cholesky(self.B)
         # self.BLU, self.BP = scipy.linalg.lu_factor(self.B.T @ self.B)
         self.BLU, self.BP = scipy.linalg.lu_factor(self.B)
-        self.BL = scipy.linalg.cholesky(-self.B, True)
+        self.BL = self.stable_cholesky(-self.B, True)
         if not self.is_noise_matrix:
-            self.BpDL = scipy.linalg.cholesky(-self.BpD, True)
+            self.BpDL = self.stable_cholesky(-self.BpD, True)
             ##TODO###
             self.BpDLU, self.BpDP = scipy.linalg.lu_factor(self.BpD)
             # self.BpDLU, self.BpDP = scipy.linalg.lu_factor(self.BpD.T @ self.BpD)
@@ -1606,6 +1606,28 @@ class DeltaMap:
             raise ValueError("dpotri failed on input {}".format(cholesky))
         self.upper_triangular_to_symmetric(inv)
         return inv
+
+    def stable_cholesky(self, matrix, lower=True, initial_jitter=1.0e-12, max_tries=8):
+        """Return a Cholesky factor, adding a small diagonal jitter when needed.
+
+        This is mainly used for numerically fragile second-order Delta-map
+        blocks, where the matrix should be positive definite in theory but may
+        pick up tiny negative eigenvalues from round-off.
+        """
+        sym_matrix = 0.5 * (matrix + matrix.T)
+        diag_scale = max(1.0, float(numpy.max(numpy.abs(numpy.diag(sym_matrix)))))
+        jitter = 0.0
+        for _ in range(max_tries):
+            try:
+                if jitter == 0.0:
+                    return scipy.linalg.cholesky(sym_matrix, lower=lower)
+                return scipy.linalg.cholesky(
+                    sym_matrix + numpy.eye(sym_matrix.shape[0]) * jitter,
+                    lower=lower,
+                )
+            except numpy.linalg.LinAlgError:
+                jitter = initial_jitter * diag_scale if jitter == 0.0 else jitter * 10.0
+        raise numpy.linalg.LinAlgError("Matrix remained non-positive-definite after jittered Cholesky attempts.")
 
 
 def main():

@@ -11,9 +11,9 @@
 - Basic smoke/regression checks exist under `tests/test_smoke.py`.
 - Local end-to-end checks were completed with the bundled local dust FITS files
   under `data/pysm_2/`.
-- There is active in-progress work in `extended_deltamap/dmatrix.py` to turn
-  `PrepareDMatrix(order=...)` into the public order-aware API for future
-  second-order expansion support.
+- Order-aware `DMatrix` preparation and config-driven `order=...` selection are
+  implemented, and current work is focused on understanding why the
+  second-order dust likelihood remains unstable.
 
 ## What has been completed on this branch
 - Fixed the `extended_deltamap.deltamap` module entrypoint by adding the missing
@@ -25,11 +25,20 @@
   per-frequency artificial noise for the instrument-side channel component.
 - Made `extended_deltamap/dmatrix.py` rebuild its template columns from a fresh
   list so repeated matrix preparation no longer accumulates duplicate columns.
+- Added explicit Taylor prefactors to repeated higher-order derivative columns
+  in `extended_deltamap/dmatrix.py` using a multiplicity-based factorial helper
+  so diagonal second derivatives now carry `1/2`, and the same logic extends
+  naturally to future third-order terms.
 - Added smoke/regression tests covering:
   package import,
   the fixed module entrypoint,
   one minimal covariance build,
   and repeated `DMatrix` rebuild behavior.
+- Extended the smoke tests to cover:
+  second-order helper ordering,
+  order-aware `DMatrix` column counts,
+  config validation for second-order dust runs,
+  and the generalized Taylor prefactor logic.
 - Confirmed these commands complete successfully in the local environment:
   `uv run python -m unittest discover -s tests -v`
   `uv run python examples/run_pysm3.py examples/LTD_config.ini`
@@ -39,17 +48,19 @@
   `DELTAMAP_DUST_TEMP_MAP=data/pysm_2/dust_temp.fits`
 
 ## Current in-progress code changes
-- `extended_deltamap/dmatrix.py`
-  Work is underway to:
-  expose `PrepareDMatrix(order=...)`,
-  make `PrepareUniformDMatrix()` a compatibility wrapper,
-  and redefine `dim_params` so it matches the actual number of generated
-  columns at the chosen expansion order.
-- This work is not committed yet in the current worktree.
+- `extended_deltamap/deltamap.py`
+  Numerical-stability helpers now use jittered Cholesky factorization for some
+  nearly-positive-definite blocks, but second-order dust runs can still fail in
+  `CalcB()` when the optimizer reaches genuinely non-positive-definite regions.
+- `examples/`
+  Several local second-order dust configs were added for experiments with
+  `order=2`, `anoise`, and `fgnoise_fac`.
+- These current changes are not committed yet in the current worktree.
 
 ## Second-order design decisions already agreed
-- Taylor-series coefficients such as `1/2` should be absorbed on the sky-side
-  unknowns rather than into the frequency-space derivative columns.
+- Diagonal higher-order derivative columns should carry the explicit Taylor
+  prefactors in frequency space, using a multiplicity-based factorial rule
+  rather than ad-hoc per-order special cases.
 - Mixed derivatives should appear only once per unordered parameter pair.
 - Derivative multi-indices should follow parameter-name order.
 - Component block order should stay aligned with the current implementation:
@@ -65,20 +76,26 @@
 
 ## Known limitations
 - `examples/TestDeltamap.py` is still large and research-script shaped.
-- There is not yet a committed public API for second-order Delta-map expansion;
-  only the groundwork and design notes exist so far.
+- The order-aware public API exists, but the statistical treatment of the
+  second-order sky-side terms is still unresolved.
+- In local 9-band dust-only tests with `anoise=1.0`:
+  `order=1` recovers `r ≈ 9.8e-3`,
+  while `order=2` either collapses toward `r ≈ 0` or fails when the optimizer
+  reaches a non-positive-definite `B` block.
 - The SciPy `sph_harm` compatibility shim works in the current environment, but
   supported-version policy still needs to be finalized.
 - `uv.lock` exists locally and is used, but still needs a normal review and
   commit decision.
 
 ## Suggested next steps
-1. Finish the in-progress `DMatrix` API cleanup and add tests for
-   `PrepareDMatrix(order=0|1|2)` and `dim_params`.
-2. Compare generated second-order dust/synch columns against the local design
-   memo before touching `DeltaMap` likelihood code.
-3. Decide whether to commit `uv.lock`.
-4. Continue doc cleanup once the second-order API direction settles.
+1. Revisit the second-order sky-side statistical treatment before adding more
+   numerical patches to the likelihood code.
+2. Use the local Japanese design memo to decide whether the second-order
+   sky-side terms can really be marginalized as independent nuisance fields.
+3. Only after that, decide whether the `CalcB()` failures should be treated as
+   invalid-parameter rejections or as a sign that the current second-order
+   likelihood is mathematically mismatched.
+4. Decide whether to commit `uv.lock`.
 
 ## Useful commands
 - Run smoke/regression tests:

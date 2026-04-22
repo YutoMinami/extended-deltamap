@@ -1,4 +1,6 @@
+from collections import Counter
 from itertools import combinations_with_replacement
+from math import factorial
 
 import numpy
 import sympy
@@ -63,6 +65,14 @@ class DMatrix:
         """Return parameters in a stable order for derivative construction."""
         return sorted(params, key=lambda param: param.name)
 
+    def _derivative_prefactor(self, derivative_multi_index):
+        """Return the Taylor-series prefactor for a repeated derivative tuple."""
+        multiplicities = Counter(derivative_multi_index)
+        denominator = 1
+        for count in multiplicities.values():
+            denominator *= factorial(count)
+        return sympy.Rational(1, denominator)
+
     def _build_component_terms(self, func, params, max_order=1, diff_param=None):
         """Build one component's basis terms up to the requested derivative order.
 
@@ -85,14 +95,13 @@ class DMatrix:
                     continue
                 component_terms.append(sympy.simplify(sympy.diff(func, param)))
 
-        if max_order >= 2:
-            for left_param, right_param in combinations_with_replacement(ordered_params, 2):
-                if diff_param is not None and diff_param not in {
-                    left_param.name,
-                    right_param.name,
-                }:
+        for derivative_order in range(2, max_order + 1):
+            for derivative_multi_index in combinations_with_replacement(ordered_params, derivative_order):
+                if diff_param is not None and diff_param not in {param.name for param in derivative_multi_index}:
                     continue
-                component_terms.append(sympy.simplify(sympy.diff(func, left_param, right_param)))
+                derivative_term = sympy.diff(func, *derivative_multi_index)
+                derivative_term *= self._derivative_prefactor(derivative_multi_index)
+                component_terms.append(sympy.simplify(derivative_term))
 
         return component_terms
 

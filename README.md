@@ -163,6 +163,9 @@ The most useful example configs are:
 - `examples/Dust_var_9freq_r1e-2.ini`
   Dust-only 9-band setup using all channels from `100 GHz` through `402 GHz`,
   closer to the band selection discussed in the paper.
+- `examples/Dust_var_9freq_r1e-2_order2.ini`
+  Dust-only 9-band setup with `order = 2`, intended for second-order D-matrix
+  tests with the minimum band count for two dust parameters.
 - `examples/LTD_config_sections.ini`
   New-section version of the shared simulation config, provided as a migration
   example for `[instrument]`, `[foreground]`, and `[simulation]`.
@@ -179,7 +182,7 @@ basic config validation before the expensive map and likelihood steps:
 - fit frequencies must be a subset of the simulation frequencies
 - at least one foreground component must be enabled
 - the fit model must have enough frequency channels for its current parameter
-  count
+  count and configured D-matrix order
 - fit outputs are expected to use `.csv`
 
 When adding new configs, the preferred section layout is now:
@@ -194,7 +197,7 @@ When adding new configs, the preferred section layout is now:
   `anoise_name`, `anoise_freq_name`, `cmb_name`, and `maskname`
 - `[fit]`
   Fit-time settings such as selected channels, enabled components, parameter
-  lists, initial values, `anoise`, `fgnoise_fac`, `fixTd`, `migrad`, and
+  lists, initial values, D-matrix `order`, `anoise`, `fgnoise_fac`, `fixTd`, `migrad`, and
   `simul`
 - `[templates]`
   Foreground template map patterns such as `dust_temp` and `synch_temp`

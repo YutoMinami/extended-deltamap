@@ -60,6 +60,19 @@ def get_bool_value(parser: configparser.ConfigParser, *candidates: tuple[str, st
     return parser._convert_to_boolean(get_config_value(parser, *candidates))
 
 
+def count_component_terms(n_params: int, order: int) -> int:
+    """Return the number of D-matrix columns for one component up to ``order``."""
+    if order < 0 or order > 2:
+        raise ValueError(f"Only D-matrix orders 0, 1, and 2 are currently supported, got {order}.")
+
+    n_terms = 1
+    if order >= 1:
+        n_terms += n_params
+    if order >= 2:
+        n_terms += n_params * (n_params + 1) // 2
+    return n_terms
+
+
 def validate_fit_setup(
     *,
     map_parser: configparser.ConfigParser,
@@ -96,11 +109,22 @@ def validate_fit_setup(
     if "r" not in fit_params:
         raise ValueError("Fit params must include 'r'.")
 
+    order = get_int_value(fit_parser, ("fit", "order"), ("par", "order")) if (
+        fit_parser.has_option("fit", "order") or fit_parser.has_option("par", "order")
+    ) else 1
+
+    dust_param_count = 0
+    if isdust:
+        dust_param_count = sum(param in fit_params for param in ("T_d1", "x^R", "beta_d"))
+    synch_param_count = 0
+    if issynch:
+        synch_param_count = sum(param in fit_params for param in ("beta_s",))
+
     min_freq_count = 1
     if isdust:
-        min_freq_count += 2 if get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")) else 3
+        min_freq_count += count_component_terms(dust_param_count, order)
     if issynch:
-        min_freq_count += 2
+        min_freq_count += count_component_terms(synch_param_count, order)
     if len(nu_list_fit) < min_freq_count:
         raise ValueError(
             "Not enough fitting frequencies for the selected model. "
@@ -528,6 +552,7 @@ def test_fg_with_noise_cov(
     uni: bool = False,
     fixTd: bool = False,
     fixbetad: bool = False,
+    order: int = 1,
     fgnoise_fac: float | None = None,
     fgfac: float = 1.0,
     dmp: DeltaMap | None = None,
@@ -631,7 +656,7 @@ def test_fg_with_noise_cov(
     if uni:
         dmt.PrepareUniformDMatrix()
     else:
-        dmt.PrepareDMatrix()
+        dmt.PrepareDMatrix(order=order)
 
     cov = Covariance(nside=nside, maskname=maskname, verbose=False, pixwin=True, lmax=nside * 2, fwhm=fwhm)
     cov.Initialise()
@@ -703,6 +728,7 @@ def test_fg_with_noise_cov_xref(
     uni: bool = False,
     fixTd: bool = False,
     fixbetad: bool = False,
+    order: int = 1,
     fgnoise_fac: float | None = None,
     fgfac: float = 1.0,
     dmp: DeltaMap | None = None,
@@ -807,7 +833,7 @@ def test_fg_with_noise_cov_xref(
     if uni:
         dmt.PrepareUniformDMatrix()
     else:
-        dmt.PrepareDMatrix()
+        dmt.PrepareDMatrix(order=order)
 
     cov = Covariance(nside=nside, maskname=maskname, verbose=False, pixwin=True, lmax=nside * 2, fwhm=fwhm)
     cov.Initialise()
@@ -924,6 +950,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         fgnoise_fac = None
     else:
         fgnoise_fac = get_float_value(fit_parser, ("fit", "fgnoise_fac"), ("par", "fgnoise_fac"))
+    fit_order = get_int_value(fit_parser, ("fit", "order"), ("par", "order")) if (
+        fit_parser.has_option("fit", "order") or fit_parser.has_option("par", "order")
+    ) else 1
 
     fit_params = get_config_value(fit_parser, ("fit", "params"), ("par", "params")).split()
     fit_inits = parse_float_list(fit_parser, ("fit", "inits"), ("par", "inits"))
@@ -980,6 +1009,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             anoise=anoise,
             fgnoise_fac=fgnoise_fac,
             fixTd=get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")),
+            order=fit_order,
             dmp=dmp,
             T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),
@@ -1005,6 +1035,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             anoise=anoise,
             fgnoise_fac=fgnoise_fac,
             fixTd=get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")),
+            order=fit_order,
             dmp=dmp,
             T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),

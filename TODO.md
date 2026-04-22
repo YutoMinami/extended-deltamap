@@ -4,6 +4,11 @@
 - Finish the in-progress `DMatrix` API cleanup so `PrepareDMatrix(order=...)`
   becomes the public entry point for 0th-, 1st-, and future 2nd-order builds,
   while `dim_params` always matches the actual column count.
+- Revisit the second-order Delta-map statistical treatment before pushing the
+  current `order=2` path further; 9-band dust tests show that
+  `order=1` can recover `r` while `order=2` still becomes unstable or
+  collapses to `r ≈ 0`, even after restoring the explicit Taylor `1/2`
+  coefficients on diagonal second-derivative terms.
 - When finalizing supported SciPy versions, confirm that the `sph_harm` compatibility shim still matches the intended API and numerical behavior.
 
 ## Backlog
@@ -42,9 +47,6 @@
 ## Future methodology update: second-order Delta-map expansion
 - Design the second-order foreground expansion before changing `extended_deltamap/dmatrix.py`; this is a future methodology update, not part of the current bug-fix pass.
 - Agreed design direction so far:
-  Taylor-series coefficients such as `1/2` should be absorbed on the sky-side
-  unknowns, not into the frequency-space derivative columns.
-- Agreed design direction so far:
   mixed derivatives should appear only once per unordered parameter pair.
 - Agreed design direction so far:
   derivative multi-indices should follow parameter-name order.
@@ -63,4 +65,8 @@
 - Decide and document the column ordering convention for 0th-, 1st-, and 2nd-order terms before implementation so `D_matrix`, parameter bookkeeping, and downstream fitting code stay aligned.
 - Specify the corresponding second-order sky-side unknowns explicitly, including the meaning of terms like `(δp_i)^2 s_b` and `(δp_i δp_j) s_b`.
 - Confirm the correct Taylor-expansion coefficients, especially whether diagonal second-order terms should carry a `1/2` factor and how that factor should be absorbed between the frequency-space basis and the sky-side amplitudes.
+- Update:
+  diagonal second-derivative columns now carry the explicit Taylor `1/2`
+  prefactor in `DMatrix`, generalized through a multiplicity-based factorial
+  prefactor helper that also extends naturally to higher orders.
 - Update the likelihood and fitting code only after the second-order basis definition is fixed on paper; adding second-derivative columns alone is not sufficient.

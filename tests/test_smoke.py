@@ -3,16 +3,24 @@ from __future__ import annotations
 import subprocess
 import sys
 import unittest
+import configparser
+import importlib.util
 from pathlib import Path
 
 import numpy as np
 import sympy
 
-from extended_deltamap import Covariance, DMatrix, Templates
+from extended_deltamap import Covariance, DMatrix, DeltaMap, Templates
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MASK_PATH = REPO_ROOT / "examples" / "files" / "mask_p06_Nside4.v2.fits"
+TEST_DELTAMAP_PATH = REPO_ROOT / "examples" / "TestDeltamap.py"
+
+_spec = importlib.util.spec_from_file_location("example_testdeltamap", TEST_DELTAMAP_PATH)
+assert _spec is not None and _spec.loader is not None
+example_testdeltamap = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(example_testdeltamap)
 
 
 class SmokeTests(unittest.TestCase):
@@ -91,11 +99,12 @@ class SmokeTests(unittest.TestCase):
         ]
         self.assertEqual(terms[1:3], expected_first_order)
         expected_second_order = [
-            sympy.simplify(sympy.diff(dust, params[0], params[0])),
+            sympy.simplify(sympy.diff(dust, params[0], params[0]) / 2),
             sympy.simplify(sympy.diff(dust, params[0], params[1])),
-            sympy.simplify(sympy.diff(dust, params[1], params[1])),
+            sympy.simplify(sympy.diff(dust, params[1], params[1]) / 2),
         ]
-        self.assertEqual(terms[3:], expected_second_order)
+        for actual_term, expected_term in zip(terms[3:], expected_second_order):
+            self.assertEqual(sympy.simplify(actual_term - expected_term), 0)
 
     def test_prepare_dmatrix_order_controls_column_count_and_dim_params(self) -> None:
         templates = Templates()
@@ -154,6 +163,96 @@ class SmokeTests(unittest.TestCase):
 
         self.assertEqual(dmatrix.D_matrix_template, expected_terms)
         self.assertEqual(dmatrix.dim_params, len(expected_terms))
+
+    def test_count_component_terms_matches_second_order_dust_columns(self) -> None:
+        self.assertEqual(example_testdeltamap.count_component_terms(2, 0), 1)
+        self.assertEqual(example_testdeltamap.count_component_terms(2, 1), 3)
+        self.assertEqual(example_testdeltamap.count_component_terms(2, 2), 6)
+
+    def test_dmatrix_prefactor_generalizes_to_third_order(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        dust = templates.ReturnMBB1()
+        params = dmatrix._sorted_params([param for param in dust.free_symbols if param.name != "nu"])
+
+        terms = dmatrix._build_component_terms(dust, params, max_order=3)
+
+        expected_third_order = [
+            sympy.simplify(sympy.diff(dust, params[0], params[0], params[0]) / 6),
+            sympy.simplify(sympy.diff(dust, params[0], params[0], params[1]) / 2),
+            sympy.simplify(sympy.diff(dust, params[0], params[1], params[1]) / 2),
+            sympy.simplify(sympy.diff(dust, params[1], params[1], params[1]) / 6),
+        ]
+
+        self.assertEqual(len(terms), 10)
+        for actual_term, expected_term in zip(terms[6:], expected_third_order):
+            self.assertEqual(sympy.simplify(actual_term - expected_term), 0)
+
+    def test_validate_fit_setup_requires_enough_bands_for_second_order_dust(self) -> None:
+        map_parser = configparser.ConfigParser()
+        map_parser.read_dict(
+            {
+                "par": {
+                    "nu": "100 119 140 166 195 235 280 337 402",
+                    "fwhm": "1 1 1 1 1 1 1 1 1",
+                    "noise": "1 1 1 1 1 1 1 1 1",
+                }
+            }
+        )
+        fit_parser = configparser.ConfigParser()
+        fit_parser.read_dict(
+            {
+                "par": {
+                    "nu": "100 119 140 166 195 235 280 337 402",
+                    "isdust": "True",
+                    "issynch": "False",
+                    "fixTd": "False",
+                    "params": "r T_d1 beta_d beta_s",
+                    "inits": "0.5 20.1 1.5 -3.0",
+                    "oname": "num0001.csv",
+                    "order": "2",
+                }
+            }
+        )
+
+        example_testdeltamap.validate_fit_setup(
+            map_parser=map_parser,
+            fit_parser=fit_parser,
+            nu_list=np.array([100, 119, 140, 166, 195, 235, 280, 337, 402], dtype=float),
+            fwhm_list=np.ones(9),
+            noise_list=np.ones(9),
+            nu_list_fit=np.array([100, 119, 140, 166, 195, 235, 280, 337, 402], dtype=float),
+            fit_params=["r", "T_d1", "beta_d", "beta_s"],
+            fit_inits=np.array([0.5, 20.1, 1.5, -3.0], dtype=float),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Not enough fitting frequencies"):
+            example_testdeltamap.validate_fit_setup(
+                map_parser=map_parser,
+                fit_parser=fit_parser,
+                nu_list=np.array([100, 119, 140, 166, 195, 235, 280, 337, 402], dtype=float),
+                fwhm_list=np.ones(9),
+                noise_list=np.ones(9),
+                nu_list_fit=np.array([166, 195, 235, 280, 337, 402], dtype=float),
+                fit_params=["r", "T_d1", "beta_d", "beta_s"],
+                fit_inits=np.array([0.5, 20.1, 1.5, -3.0], dtype=float),
+            )
+
+    def test_stable_cholesky_handles_small_negative_roundoff(self) -> None:
+        dmp = DeltaMap()
+        nearly_pd = np.array(
+            [
+                [1.0, 0.9999999999995],
+                [0.9999999999995, 0.9999999999989],
+            ]
+        )
+
+        factor = dmp.stable_cholesky(nearly_pd, lower=True)
+
+        reconstructed = factor @ factor.T
+        self.assertEqual(factor.shape, (2, 2))
+        self.assertTrue(np.all(np.isfinite(factor)))
+        self.assertTrue(np.allclose(reconstructed, reconstructed.T))
 
 
 if __name__ == "__main__":

@@ -231,8 +231,9 @@ paths defined in the config files.
 - The active refactor notes live in `TODO.md`.
 - Repo-local working agreements for automated contributors live in `AGENTS.md`.
 - Current handoff notes for future work live in `HANDOFF.md`.
-- A local Japanese design note for second-order Delta-map work can be kept under
-  `data/notes/`; this directory is gitignored on purpose.
+- Local Japanese design notes for second-order Delta-map work and region-wise
+  foreground-parameter work can be kept under `data/notes/`; this directory is
+  gitignored on purpose.
 
 ## Current status
 
@@ -243,6 +244,9 @@ This repository has recently been updated to:
 - package the code under `extended_deltamap/`
 - improve path handling and example-script readability
 - add docstrings across the actively used modules
+- add exploratory support for order-aware `DMatrix` construction while the next
+  methodology direction moves toward region-wise foreground parameters instead
+  of deeper second-order fitting
 
 ## Caveats
 
@@ -251,3 +255,6 @@ This repository has recently been updated to:
 - Example fitting currently depends on external dust parameter FITS files
   provided through environment variables.
 - The example scripts are still the main operational entry points.
+- Region-wise foreground parameters are still at the design-note stage. A first
+  prototype should start with a small number of broad dust regions before moving
+  toward clustered dust and synchrotron region sets.

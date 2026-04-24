@@ -4,11 +4,22 @@
 - Finish the in-progress `DMatrix` API cleanup so `PrepareDMatrix(order=...)`
   becomes the public entry point for 0th-, 1st-, and future 2nd-order builds,
   while `dim_params` always matches the actual column count.
-- Revisit the second-order Delta-map statistical treatment before pushing the
+- Pause deeper second-order Delta-map fitting work and shift the next
+  methodology work toward region-wise foreground parameters.
+- Keep the second-order findings documented before pushing the
   current `order=2` path further; 9-band dust tests show that
   `order=1` can recover `r` while `order=2` still becomes unstable or
   collapses to `r ≈ 0`, even after restoring the explicit Taylor `1/2`
   coefficients on diagonal second-derivative terms.
+- Check whether `nside=4` is simply too coarse to constrain the added
+  second-order sky-side terms; low spatial information may be part of why the
+  `order=2` likelihood becomes unstable even when the first-order model works.
+- Design a region-wise foreground-parameter prototype:
+  start with dust-only, 2 regions, and one region-wise parameter before moving
+  toward k-means clustering with roughly 10 dust regions.
+- Keep dust and synchrotron region sets independent in the design; their
+  clustering maps, region masks, parameter names, and final region counts may
+  differ.
 - When finalizing supported SciPy versions, confirm that the `sph_harm` compatibility shim still matches the intended API and numerical behavior.
 
 ## Backlog
@@ -70,3 +81,23 @@
   prefactor in `DMatrix`, generalized through a multiplicity-based factorial
   prefactor helper that also extends naturally to higher orders.
 - Update the likelihood and fitting code only after the second-order basis definition is fixed on paper; adding second-derivative columns alone is not sufficient.
+
+## Future methodology update: region-wise foreground parameters
+- Explore piecewise-constant foreground parameters over broad sky regions as an
+  alternative to pushing the current second-order expansion.
+- First prototype:
+  dust-only, 2 regions, first-order Delta-map, and one region-wise dust
+  parameter.
+- Longer-term target:
+  use clustering, likely k-means with around 10 regions, rather than manually
+  chosen sky patches.
+- Prefer clustering dust regions from dust-dominated high-frequency maps such as
+  `353 GHz`, rather than from external `T_d` estimates.
+- Keep dust and synchrotron region sets separate by design. Synchrotron regions
+  should eventually be allowed to come from low-frequency synchrotron-dominated
+  maps rather than reusing dust regions.
+- Region count should not be treated as directly increasing the required number
+  of frequency bands. Regions are spatially disjoint, so each pixel only sees
+  its own region's foreground parameters. The main costs are larger global
+  parameter bookkeeping, fewer effective pixels per region, larger block
+  matrices, and stronger region-level statistical noise.

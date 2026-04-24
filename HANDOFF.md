@@ -14,6 +14,8 @@
 - Order-aware `DMatrix` preparation and config-driven `order=...` selection are
   implemented, and current work is focused on understanding why the
   second-order dust likelihood remains unstable.
+- The methodology direction is shifting away from pushing `order=2` fitting
+  harder and toward region-wise foreground parameters over broad sky patches.
 
 ## What has been completed on this branch
 - Fixed the `extended_deltamap.deltamap` module entrypoint by adding the missing
@@ -72,6 +74,9 @@
 ## Local design notes
 - A gitignored Japanese design memo for the second-order work lives at:
   [SECOND_ORDER_DELTAMAP_JA.md](/home/yminami/workdir/DeltaMap/extended-deltamap/data/notes/SECOND_ORDER_DELTAMAP_JA.md:1)
+- A gitignored Japanese design memo for region-wise foreground parameters lives
+  at:
+  [REGIONWISE_PARAMETER_DELTAMAP_JA.md](/home/yminami/workdir/DeltaMap/extended-deltamap/data/notes/REGIONWISE_PARAMETER_DELTAMAP_JA.md:1)
 - Because it is under `data/`, it is not tracked by git.
 
 ## Known limitations
@@ -82,20 +87,26 @@
   `order=1` recovers `r ≈ 9.8e-3`,
   while `order=2` either collapses toward `r ≈ 0` or fails when the optimizer
   reaches a non-positive-definite `B` block.
+- The emerging alternative is to keep the Delta-map expansion first-order and
+  allow foreground parameters to vary by broad sky region. Dust and synchrotron
+  should be allowed to use separate region sets.
 - The SciPy `sph_harm` compatibility shim works in the current environment, but
   supported-version policy still needs to be finalized.
 - `uv.lock` exists locally and is used, but still needs a normal review and
   commit decision.
 
 ## Suggested next steps
-1. Revisit the second-order sky-side statistical treatment before adding more
-   numerical patches to the likelihood code.
-2. Use the local Japanese design memo to decide whether the second-order
-   sky-side terms can really be marginalized as independent nuisance fields.
-3. Only after that, decide whether the `CalcB()` failures should be treated as
-   invalid-parameter rejections or as a sign that the current second-order
-   likelihood is mathematically mismatched.
-4. Decide whether to commit `uv.lock`.
+1. Prototype region-wise foreground parameters before adding more numerical
+   patches to the second-order likelihood path.
+2. Start with a dust-only, 2-region, first-order setup and only one region-wise
+   dust parameter.
+3. Keep the design ready for separate dust and synchrotron region sets:
+   dust can be clustered from high-frequency dust-dominated maps, while
+   synchrotron can later use low-frequency maps.
+4. Track the likely bottlenecks: larger `D`/block matrices, more fit
+   parameters, fewer effective pixels per region, clustering stability, and
+   region-level priors if needed.
+5. Decide whether to commit `uv.lock`.
 
 ## Useful commands
 - Run smoke/regression tests:

@@ -209,14 +209,27 @@ Validation completed:
     min `-3.0541201`, max `-2.8910757`
   - `beta_s_sreg1`: mean `-3.014152`, sample std `0.055480556`,
     min `-3.0802615`, max `-2.9309276`
+- `scripts/make_synch_brightness_regions.py` now supports
+  `--region-count`, while preserving the existing 2-region median filenames.
+- `examples/Synch_var_3freq_regionwise4_r1e-2.ini` enables a 4-region
+  synchrotron quantile split. Local mask generation command:
+  `uv run python scripts/make_synch_brightness_regions.py examples/output_pysm3_ns4/test01_nu0040p00GHz_s1_nside0004.fits examples/files/mask_p06_Nside4.v2.fits --output-dir data/regions --prefix synch40_quantile4_ns4 --nside 4 --region-count 4`
+- The local 4-region masks split 107 valid pixels into `27/26/27/27` pixels.
+  In observed Q/U layout, the prepared D-matrix has shape `(3, 8)`, all 8
+  columns are masked, `DTNIDc.shape == (1712, 214)`, and
+  `DTNIM.shape == (1712, 1)`.
+- A direct full iterative 4-region seed-1 fit was stopped after about 4 minutes
+  with no CSV output yet. This looks like a runtime/optimization-cost issue
+  rather than a setup failure; the same setup reaches `CalcH_matrix()`.
 
 Remaining immediate work:
-- Add a 4-region synchrotron split and run the same seed comparison against the
+- Decide how to validate the 4-region model efficiently: longer single-seed
+  run, simultaneous fit mode, reduced optimizer iterations, or profiling the
+  repeated matrix solves.
+- After one 4-region fit completes, run the same seed comparison against the
   unregioned and 2-region baselines.
-- Inspect condition numbers and mask-size sensitivity if the 4-region fit
-  becomes unstable.
-- If 4 regions remain stable, move toward the longer-term 8-10 region
-  clustering target.
+- If 4 regions remain stable and affordable, move toward the longer-term
+  8-10 region clustering target.
 
 ### Step 1 — Region mask creation
 - Create boolean pixel masks of shape `(n_pix,)` for each region.

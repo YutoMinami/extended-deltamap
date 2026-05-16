@@ -14,9 +14,21 @@
 - Check whether `nside=4` is simply too coarse to constrain the added
   second-order sky-side terms; low spatial information may be part of why the
   `order=2` likelihood becomes unstable even when the first-order model works.
-- Design a region-wise foreground-parameter prototype:
-  start with dust-only, 2 regions, and one region-wise parameter before moving
-  toward k-means clustering with roughly 10 dust regions.
+- Implement region-wise foreground-parameter prototype following the 5-step
+  plan (see HANDOFF.md for detail). Start with synchrotron-only, 2 fixed
+  regions, beta_s only, first-order Delta-map.
+  Step 1: region mask creation — boolean arrays of shape (size,), expand pixel
+    mask to Q/U, validate disjoint and full coverage.
+  Step 2: add symbol_name kwarg to Templates methods so per-region symbols
+    beta_s_sreg0, beta_s_sreg1, etc. can be generated.
+  Step 3: add column_masks list to DMatrix; AddD() accepts optional region_mask;
+    each derivative column inherits the same mask as its parent component.
+  Step 4: update CalcH_matrix() to apply mask operators row/column-wise when
+    building each (i,j) pixel-space block of DTNID, DTNIDc, and DTNIM.
+  Step 5: add parameter expansion helper in TestDeltamap.py to convert
+    beta_s=[v0,v1] into beta_s_sreg0, beta_s_sreg1 inits entries.
+  Validate with column_masks=None first (existing tests must still pass), then
+  enable masks and check beta_s recovery for the 2-region synchrotron case.
 - Keep dust and synchrotron region sets independent in the design; their
   clustering maps, region masks, parameter names, and final region counts may
   differ.
@@ -83,21 +95,18 @@
 - Update the likelihood and fitting code only after the second-order basis definition is fixed on paper; adding second-derivative columns alone is not sufficient.
 
 ## Future methodology update: region-wise foreground parameters
-- Explore piecewise-constant foreground parameters over broad sky regions as an
-  alternative to pushing the current second-order expansion.
-- First prototype:
-  dust-only, 2 regions, first-order Delta-map, and one region-wise dust
-  parameter.
-- Longer-term target:
-  use clustering, likely k-means with around 10 regions, rather than manually
-  chosen sky patches.
-- Prefer clustering dust regions from dust-dominated high-frequency maps such as
-  `353 GHz`, rather than from external `T_d` estimates.
-- Keep dust and synchrotron region sets separate by design. Synchrotron regions
-  should eventually be allowed to come from low-frequency synchrotron-dominated
-  maps rather than reusing dust regions.
-- Region count should not be treated as directly increasing the required number
-  of frequency bands. Regions are spatially disjoint, so each pixel only sees
-  its own region's foreground parameters. The main costs are larger global
-  parameter bookkeeping, fewer effective pixels per region, larger block
-  matrices, and stronger region-level statistical noise.
+- Prototype is synchrotron-only, 2 fixed regions, beta_s only (see Active).
+- After prototype: extend to dust with separate region sets; dust regions
+  clustered from 353 GHz dust-dominated maps, synchrotron regions from
+  low-frequency maps. Do not reuse the same masks across components.
+- Longer-term target: k-means clustering with around 10 regions per component.
+  Grow region count in stages (2 → 4 → 8 → 10) and check condition numbers
+  and parameter stability at each stage.
+- Region count does not increase required frequency bands. Spatial exclusivity
+  means each pixel sees only its own region's foreground parameters. Main costs
+  are global parameter count, effective pixels per region, block matrix size,
+  and region-level statistical noise.
+- Physical motivation for separate dust/synchrotron region sets: beta_s spatial
+  variation is driven by cosmic-ray and magnetic-field structure; T_d and beta_d
+  variation is driven by ISM density and radiation-field structure. These
+  spatial patterns are independent and should not share a common region mask.

@@ -95,18 +95,73 @@
 - `uv.lock` exists locally and is used, but still needs a normal review and
   commit decision.
 
+## Region-wise parameter implementation plan
+
+Design settled in conversation on 2026-05-16. Implement in the order below.
+Start with synchrotron-only, 2 fixed regions, beta_s only, first-order fit.
+
+### Step 1 — Region mask creation
+- Create boolean pixel masks of shape `(n_pix,)` for each region.
+- Expand to full Q/U size: `numpy.concatenate([mask_pix, mask_pix])` → shape `(size,)`.
+- Validate: masks are disjoint (`mask0 & mask1 == 0`) and together cover the
+  observed pixels.
+- For the first prototype, use a simple fixed split (e.g. north/south by
+  HEALPix theta). Clustering comes later.
+- Store as `synch_region_masks = [mask_sreg0, mask_sreg1]`.
+- Files: new utility function in `TestDeltamap.py` or a small helper module.
+
+### Step 2 — Templates: per-region symbol names
+- Add `symbol_name="beta_s"` kwarg to `ReturnPowerLawSynch()` and equivalent
+  dust methods so callers can pass `"beta_s_sreg0"`, `"beta_s_sreg1"`, etc.
+- Call `AddD()` in a loop over regions, passing the region-specific symbol.
+- Files: `extended_deltamap/templates.py` (1-line change per method), setup
+  code in `TestDeltamap.py`.
+
+### Step 3 — DMatrix: column-to-region metadata
+- Add `self.column_masks = []` to `DMatrix.__init__`.
+- Add optional `region_mask=None` argument to `AddD()`; store one entry per
+  component.
+- In `_set_matrix_from_template_terms()`, expand `column_masks` so every
+  derivative column inherits the same mask as its parent component term.
+- With `region_mask=None` the behaviour is identical to today (no-mask path).
+- Files: `extended_deltamap/dmatrix.py`.
+
+### Step 4 — DeltaMap: mask-aware CalcH_matrix
+- `CalcH_matrix()` reads `self.dmtrx.column_masks` for each column pair `(i, j)`.
+- Replace `self.NI_list[k]` with a masked version:
+  ```
+  NI_k = self.NI_list[k]
+  if mask_i is not None: NI_k = NI_k * mask_i[:, None]
+  if mask_j is not None: NI_k = NI_k * mask_j[None, :]
+  element += D[k, i] * NI_k * D[k, j]
+  ```
+- Apply same masking in the `DTNIDc` and `DTNIM` loops (row-mask only, `mask_i`).
+- Matrix shapes are unchanged: DTNID stays `(n_cols*size) × (n_cols*size)`;
+  A, Delta, B stay `size × size`.
+- Validate: with all masks None the likelihood and parameter recovery must match
+  the pre-change baseline.
+- Files: `extended_deltamap/deltamap.py` (`CalcH_matrix` only).
+
+### Step 5 — Config/inits parameter expansion
+- Add a helper that converts `{"beta_s": ([v0, v1], (lo, hi))}` into
+  `{"beta_s_sreg0": (v0, (lo, hi)), "beta_s_sreg1": (v1, (lo, hi))}`.
+- Validate that the expanded parameter count matches `len(synch_region_masks)`.
+- Files: `examples/TestDeltamap.py`.
+
+### Key design constraints to preserve
+- `A = S0_CMB_I + Σ NI_k` does not change; it has no D dependence.
+- Cross-region DTNID blocks are zero when noise is pixel-diagonal. Full CMB
+  covariance couples regions only through A (via `S0_CMB_I`), not through DTNID.
+- Dust and synchrotron must use separate region mask lists. Their spatial
+  variation patterns are physically independent and should not share masks.
+- Internal parameter names use `_sreg{i}` for synchrotron and `_dreg{i}` for
+  dust. User-facing config uses plain arrays.
+
 ## Suggested next steps
-1. Prototype region-wise foreground parameters before adding more numerical
-   patches to the second-order likelihood path.
-2. Start with a dust-only, 2-region, first-order setup and only one region-wise
-   dust parameter.
-3. Keep the design ready for separate dust and synchrotron region sets:
-   dust can be clustered from high-frequency dust-dominated maps, while
-   synchrotron can later use low-frequency maps.
-4. Track the likely bottlenecks: larger `D`/block matrices, more fit
-   parameters, fewer effective pixels per region, clustering stability, and
-   region-level priors if needed.
-5. Decide whether to commit `uv.lock`.
+1. Implement the 5-step plan above, validating each step before the next.
+2. After the 2-region synchrotron prototype runs cleanly, extend to dust with
+   separate region masks.
+3. Decide whether to commit `uv.lock`.
 
 ## Useful commands
 - Run smoke/regression tests:

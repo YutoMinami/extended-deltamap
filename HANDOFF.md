@@ -100,6 +100,95 @@
 Design settled in conversation on 2026-05-16. Implement in the order below.
 Start with synchrotron-only, 2 fixed regions, beta_s only, first-order fit.
 
+## Region-wise implementation status
+
+Implemented on branch `feature/regionwise-foreground-parameters` through Step 5.
+The working tree was clean after commit `84174bb Add synchrotron region parameter setup`.
+
+Completed commits for this phase:
+- `c17e641 Add synchrotron brightness region mask script`
+- `4ea17eb Allow region-specific template symbols`
+- `f55d4cd Track DMatrix masks per column`
+- `e8d72f4 Document pre-step-4 cleanup tasks`
+- `b737e64 Derive DMatrix mask counts from component terms`
+- `704c76d Move region mask helpers into package`
+- `c8c2315 Document dust template factory caution`
+- `e48584a Apply DMatrix column masks in CalcH matrix`
+- `7c39722 Document CalcH no-mask regression test`
+- `36635dd Cover CalcH matrix no-mask regression`
+- `84174bb Add synchrotron region parameter setup`
+
+What is now implemented:
+- `scripts/make_synch_brightness_regions.py` creates two synchrotron regions
+  from low-frequency polarization brightness using the median of
+  `sqrt(Q^2 + U^2)` inside the analysis mask.
+- Running the script on the local 40 GHz synchrotron template produced:
+  - valid pixels: `107`
+  - faint region: `53` pixels
+  - bright region: `54` pixels
+  - output files under gitignored `data/regions/`
+- `extended_deltamap.regions` now provides reusable:
+  - `expand_to_qu`
+  - `validate_region_masks`
+- `Templates` methods accept region-specific symbol names:
+  - synchrotron: `ReturnPowerLawSynch(symbol_name=...)`
+  - power-law dust: `ReturnPowerLawDust(symbol_name=...)`
+  - MBB dust: `beta_symbol_name`, `temperature_symbol_name`, or
+    `xref_symbol_name` as appropriate.
+- `DMatrix.AddD(..., region_mask=...)` records component masks, and prepared
+  matrix columns inherit the parent component mask through `column_masks`.
+- `_count_component_terms()` now delegates to `_build_component_terms()` with
+  `sympy.Integer(1)` to avoid duplicate term-counting logic.
+- `DeltaMap.CalcH_matrix()` applies `column_masks` to:
+  - `DTNID`: row and column masks
+  - `DTNIDc`: row mask
+  - `DTNIM`: row mask
+- `examples/TestDeltamap.py` now has Step 5 helper support:
+  - `region_parameter_name`
+  - `expand_region_parameter_inits`
+  - `add_synch_components_to_dmatrix`
+  - `load_synch_region_masks`
+  - `restrict_region_mask_to_observed_qu`
+  - synch and dust template factory helpers to keep keyword differences local.
+- Optional config keys now supported:
+  - `[regions] synch_region_masks`
+  - `[regions] beta_s_region_inits`
+  - legacy `[par]` keys with the same names also work.
+
+Important implementation detail:
+- Saved region masks may be pixel masks, full-sky Q/U masks, or already in the
+  observed Q/U layout. `load_synch_region_masks()` converts them to the
+  DeltaMap internal observed vector layout:
+  `[Q observed pixels..., U observed pixels...]`.
+- For the local nside 4 example, full Q/U masks have length `384`, while
+  DeltaMap's observed Q/U vectors have length `214`. The conversion is required
+  before passing masks into `DMatrix`.
+
+Validation completed:
+- `uv run python -m unittest tests.test_smoke -v`
+  - `21` tests passed.
+- `uv run python -m py_compile examples/TestDeltamap.py`
+- `uv run python -m py_compile extended_deltamap/deltamap.py`
+- `git diff --check`
+- Existing unmasked synchrotron example still completes:
+  `DELTAMAP_DUST_BETA_MAP=data/pysm_2/dust_beta.fits DELTAMAP_DUST_TEMP_MAP=data/pysm_2/dust_temp.fits uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_r1e-2.ini 1`
+- Region-wise setup with the local 40 GHz median masks reaches
+  `CalcH_matrix()` successfully. Observed check:
+  - params: `['r', 'beta_s_sreg0', 'beta_s_sreg1']`
+  - initial values:
+    `{'r': 0.0, 'beta_s_sreg0': -3.1, 'beta_s_sreg1': -3.6}`
+  - `DTNIDc.shape == (856, 214)`
+  - `DTNIM.shape == (856, 1)`
+
+Remaining immediate work:
+- Add or copy a small example fit config that enables `[regions]` with the two
+  local synchrotron region masks and `beta_s_region_inits`.
+- Run the actual 2-region synchrotron fit end-to-end, not just setup and
+  `CalcH_matrix()`.
+- Inspect whether `beta_s_sreg0`, `beta_s_sreg1`, and `r` recover sensibly.
+- If the fit is unstable, first check mask sizes, condition numbers, and whether
+  weak priors or more frequency channels are needed.
+
 ### Step 1 — Region mask creation
 - Create boolean pixel masks of shape `(n_pix,)` for each region.
 - Expand to full Q/U size: `numpy.concatenate([mask_pix, mask_pix])` → shape `(size,)`.
@@ -220,10 +309,13 @@ This keeps the kwarg names in one place and makes the region loop readable.
   dust. User-facing config uses plain arrays.
 
 ## Suggested next steps
-1. Implement the 5-step plan above, validating each step before the next.
-2. After the 2-region synchrotron prototype runs cleanly, extend to dust with
+1. Create a region-wise synchrotron fit config using the generated
+   `data/regions/synch40_median_ns4_*_qu.npy` masks.
+2. Run the 2-region synchrotron fit end-to-end and inspect recovery of `r`,
+   `beta_s_sreg0`, and `beta_s_sreg1`.
+3. After the 2-region synchrotron prototype runs cleanly, extend to dust with
    separate region masks.
-3. Decide whether to commit `uv.lock`.
+4. Decide whether to commit `uv.lock`.
 
 ## Useful commands
 - Run smoke/regression tests:

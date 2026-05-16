@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build two synchrotron regions from low-frequency polarization brightness."""
+"""Build synchrotron regions from low-frequency polarization brightness."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Split a synchrotron template into faint/bright regions using the "
-            "median polarization brightness inside an analysis mask."
+            "polarization brightness quantiles inside an analysis mask."
         )
     )
     parser.add_argument(
@@ -51,6 +51,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Optional smoothing FWHM in degrees before thresholding.",
+    )
+    parser.add_argument(
+        "--region-count",
+        type=int,
+        default=2,
+        help="Number of brightness-quantile regions to create.",
     )
     return parser.parse_args()
 
@@ -87,44 +93,86 @@ def read_analysis_mask(mask_path: Path, nside: int | None = None) -> numpy.ndarr
     return mask != 0.0
 
 
-def split_by_median(
+def split_by_quantiles(
     brightness: numpy.ndarray,
     analysis_mask: numpy.ndarray,
-) -> tuple[numpy.ndarray, numpy.ndarray, float]:
-    """Split valid pixels into faint and bright masks by median brightness."""
+    region_count: int = 2,
+) -> tuple[list[numpy.ndarray], list[float]]:
+    """Split valid pixels into brightness-quantile masks."""
     if brightness.shape != analysis_mask.shape:
         raise ValueError(
             "brightness and analysis_mask must have the same shape: "
             f"{brightness.shape} != {analysis_mask.shape}"
         )
+    if region_count < 2:
+        raise ValueError("region_count must be at least 2")
 
     valid_values = brightness[analysis_mask]
     if len(valid_values) == 0:
         raise ValueError("analysis_mask does not contain any valid pixels")
+    if region_count > len(valid_values):
+        raise ValueError(
+            "region_count cannot exceed the number of valid pixels: "
+            f"{region_count} > {len(valid_values)}"
+        )
 
-    threshold = float(numpy.median(valid_values))
-    bright = analysis_mask & (brightness >= threshold)
-    faint = analysis_mask & ~bright
-    validate_region_masks([faint, bright], analysis_mask)
-    return faint, bright, threshold
+    thresholds = [
+        float(value)
+        for value in numpy.quantile(
+            valid_values,
+            numpy.arange(1, region_count) / region_count,
+        )
+    ]
+    region_ids = numpy.searchsorted(thresholds, brightness, side="right")
+    regions = [
+        analysis_mask & (region_ids == region_index)
+        for region_index in range(region_count)
+    ]
+    validate_region_masks(regions, analysis_mask)
+    return regions, thresholds
+
+
+def split_by_median(
+    brightness: numpy.ndarray,
+    analysis_mask: numpy.ndarray,
+) -> tuple[numpy.ndarray, numpy.ndarray, float]:
+    """Split valid pixels into faint and bright masks by median brightness."""
+    regions, thresholds = split_by_quantiles(
+        brightness,
+        analysis_mask,
+        region_count=2,
+    )
+    return regions[0], regions[1], thresholds[0]
+
+
+def region_suffix(index: int, region_count: int, layout: str) -> str:
+    """Return a stable filename suffix for one region mask."""
+    if region_count == 2:
+        labels = ["faint", "bright"]
+        return f"sreg{index}_{labels[index]}_{layout}"
+    if region_count == 4:
+        labels = ["q00_25", "q25_50", "q50_75", "q75_100"]
+        return f"sreg{index}_{labels[index]}_{layout}"
+    return f"sreg{index}_q{index:02d}_{layout}"
 
 
 def save_region_masks(
     output_dir: Path,
     prefix: str,
-    faint: numpy.ndarray,
-    bright: numpy.ndarray,
+    regions: list[numpy.ndarray],
 ) -> None:
     """Save pixel and Q/U-expanded masks."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    masks = {
-        "sreg0_faint_pix": faint,
-        "sreg1_bright_pix": bright,
-        "sreg0_faint_qu": expand_to_qu(faint),
-        "sreg1_bright_qu": expand_to_qu(bright),
-    }
-    for suffix, mask in masks.items():
-        numpy.save(output_dir / f"{prefix}_{suffix}.npy", mask)
+    region_count = len(regions)
+    for index, region in enumerate(regions):
+        numpy.save(
+            output_dir / f"{prefix}_{region_suffix(index, region_count, 'pix')}.npy",
+            region,
+        )
+        numpy.save(
+            output_dir / f"{prefix}_{region_suffix(index, region_count, 'qu')}.npy",
+            expand_to_qu(region),
+        )
 
 
 def main() -> None:
@@ -135,13 +183,18 @@ def main() -> None:
         smooth_fwhm_deg=args.smooth_fwhm_deg,
     )
     analysis_mask = read_analysis_mask(args.analysis_mask, nside=args.nside)
-    faint, bright, threshold = split_by_median(brightness, analysis_mask)
-    save_region_masks(args.output_dir, args.prefix, faint, bright)
+    regions, thresholds = split_by_quantiles(
+        brightness,
+        analysis_mask,
+        region_count=args.region_count,
+    )
+    save_region_masks(args.output_dir, args.prefix, regions)
 
-    print(f"threshold: {threshold:.8e}")
+    for index, threshold in enumerate(thresholds):
+        print(f"threshold {index}: {threshold:.8e}")
     print(f"valid pixels: {int(numpy.count_nonzero(analysis_mask))}")
-    print(f"sreg0 faint pixels: {int(numpy.count_nonzero(faint))}")
-    print(f"sreg1 bright pixels: {int(numpy.count_nonzero(bright))}")
+    for index, region in enumerate(regions):
+        print(f"sreg{index} pixels: {int(numpy.count_nonzero(region))}")
     print(f"output dir: {args.output_dir}")
 
 

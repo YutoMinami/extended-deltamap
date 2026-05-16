@@ -23,11 +23,20 @@ from extended_deltamap import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MASK_PATH = REPO_ROOT / "examples" / "files" / "mask_p06_Nside4.v2.fits"
 TEST_DELTAMAP_PATH = REPO_ROOT / "examples" / "TestDeltamap.py"
+REGION_SCRIPT_PATH = REPO_ROOT / "scripts" / "make_synch_brightness_regions.py"
 
 _spec = importlib.util.spec_from_file_location("example_testdeltamap", TEST_DELTAMAP_PATH)
 assert _spec is not None and _spec.loader is not None
 example_testdeltamap = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(example_testdeltamap)
+
+_region_spec = importlib.util.spec_from_file_location(
+    "make_synch_brightness_regions",
+    REGION_SCRIPT_PATH,
+)
+assert _region_spec is not None and _region_spec.loader is not None
+make_synch_brightness_regions = importlib.util.module_from_spec(_region_spec)
+_region_spec.loader.exec_module(make_synch_brightness_regions)
 
 
 class SmokeTests(unittest.TestCase):
@@ -66,6 +75,27 @@ class SmokeTests(unittest.TestCase):
         bad_b = np.array([False, True, True])
         with self.assertRaisesRegex(ValueError, "overlaps"):
             validate_region_masks([bad_a, bad_b], analysis_mask)
+
+    def test_synch_brightness_split_supports_four_regions(self) -> None:
+        brightness = np.arange(8.0)
+        analysis_mask = np.ones(8, dtype=bool)
+
+        regions, thresholds = make_synch_brightness_regions.split_by_quantiles(
+            brightness,
+            analysis_mask,
+            region_count=4,
+        )
+
+        self.assertEqual(thresholds, [1.75, 3.5, 5.25])
+        self.assertEqual(
+            [int(np.count_nonzero(region)) for region in regions],
+            [2, 2, 2, 2],
+        )
+        validate_region_masks(regions, analysis_mask)
+        self.assertEqual(
+            make_synch_brightness_regions.region_suffix(3, 4, "qu"),
+            "sreg3_q75_100_qu",
+        )
 
     def test_module_entrypoint_runs(self) -> None:
         result = subprocess.run(

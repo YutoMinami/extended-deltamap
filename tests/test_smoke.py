@@ -10,7 +10,14 @@ from pathlib import Path
 import numpy as np
 import sympy
 
-from extended_deltamap import Covariance, DMatrix, DeltaMap, Templates
+from extended_deltamap import (
+    Covariance,
+    DMatrix,
+    DeltaMap,
+    Templates,
+    expand_to_qu,
+    validate_region_masks,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -29,8 +36,36 @@ class SmokeTests(unittest.TestCase):
 
         self.assertEqual(
             extended_deltamap.__all__,
-            ["Covariance", "DeltaMap", "DMatrix", "Templates"],
+            [
+                "Covariance",
+                "DeltaMap",
+                "DMatrix",
+                "Templates",
+                "expand_to_qu",
+                "validate_region_masks",
+            ],
         )
+
+    def test_region_helpers_expand_and_validate_masks(self) -> None:
+        mask = np.array([True, False, True])
+        expanded = expand_to_qu(mask)
+
+        self.assertTrue(
+            np.array_equal(
+                expanded,
+                np.array([True, False, True, True, False, True]),
+            )
+        )
+
+        analysis_mask = np.array([True, True, True])
+        good_a = np.array([True, False, False])
+        good_b = np.array([False, True, True])
+        validate_region_masks([good_a, good_b], analysis_mask)
+
+        bad_a = np.array([True, True, False])
+        bad_b = np.array([False, True, True])
+        with self.assertRaisesRegex(ValueError, "overlaps"):
+            validate_region_masks([bad_a, bad_b], analysis_mask)
 
     def test_module_entrypoint_runs(self) -> None:
         result = subprocess.run(

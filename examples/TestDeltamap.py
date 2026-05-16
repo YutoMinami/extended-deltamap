@@ -18,7 +18,14 @@ import scipy.constants.constants as constants
 import sympy
 from iminuit import Minuit
 
-from extended_deltamap import Covariance, DeltaMap, DMatrix, Templates
+from extended_deltamap import (
+    Covariance,
+    DeltaMap,
+    DMatrix,
+    Templates,
+    expand_to_qu,
+    validate_region_masks,
+)
 
 FloatArray = npt.NDArray[numpy.float64]
 
@@ -45,6 +52,17 @@ def parse_float_list(parser: configparser.ConfigParser, *candidates: tuple[str, 
     return numpy.array([float(value) for value in get_config_value(parser, *candidates).split()])
 
 
+def parse_optional_float_list(
+    parser: configparser.ConfigParser,
+    *candidates: tuple[str, str],
+) -> numpy.ndarray | None:
+    """Read an optional whitespace-separated float list."""
+    for section, option in candidates:
+        if parser.has_option(section, option):
+            return numpy.array([float(value) for value in parser.get(section, option).split()])
+    return None
+
+
 def get_int_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> int:
     """Read an integer value from the first matching config key."""
     return int(get_config_value(parser, *candidates))
@@ -58,6 +76,17 @@ def get_float_value(parser: configparser.ConfigParser, *candidates: tuple[str, s
 def get_bool_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> bool:
     """Read a boolean value from the first matching config key."""
     return parser._convert_to_boolean(get_config_value(parser, *candidates))
+
+
+def get_optional_config_value(
+    parser: configparser.ConfigParser,
+    *candidates: tuple[str, str],
+) -> str | None:
+    """Read an optional config entry from a list of section/key pairs."""
+    for section, option in candidates:
+        if parser.has_option(section, option):
+            return parser.get(section, option)
+    return None
 
 
 def count_component_terms(n_params: int, order: int) -> int:
@@ -171,6 +200,145 @@ def resolve_path(base_dir: Path, path_text: str) -> str:
         The resolved absolute path.
     """
     return str((base_dir / path_text).resolve())
+
+
+def region_parameter_name(parameter_name: str, region_prefix: str, index: int) -> str:
+    """Return the internal scalar name for one region-wise parameter."""
+    return f"{parameter_name}_{region_prefix}{index}"
+
+
+def expand_region_parameter_inits(
+    initial_params: dict[str, list[float | tuple[float, float]]],
+    parameter_name: str,
+    region_prefix: str,
+    region_count: int,
+    region_values: Sequence[float] | None = None,
+) -> dict[str, list[float | tuple[float, float]]]:
+    """Expand one scalar parameter entry into region-wise scalar entries."""
+    if region_count <= 0:
+        raise ValueError("region_count must be positive")
+    if parameter_name not in initial_params:
+        raise ValueError(f"Missing initial parameter entry for {parameter_name}")
+
+    initial_value, limits = initial_params.pop(parameter_name)
+    if region_values is None:
+        values = [float(initial_value)] * region_count
+    else:
+        values = [float(value) for value in region_values]
+        if len(values) != region_count:
+            raise ValueError(
+                f"{parameter_name} region initial value count must match "
+                f"region count: {len(values)} != {region_count}"
+            )
+
+    for index, value in enumerate(values):
+        initial_params[region_parameter_name(parameter_name, region_prefix, index)] = [
+            value,
+            limits,
+        ]
+    return initial_params
+
+
+def make_synch_template(templates: Templates, beta_name: str):
+    """Build a synchrotron template with a region-specific beta symbol."""
+    return templates.ReturnPowerLawSynch(symbol_name=beta_name)
+
+
+def make_dust_temperature_template(
+    templates: Templates,
+    beta_name: str,
+    temperature_name: str,
+):
+    """Build the standard dust template with region-specific symbols."""
+    return templates.ReturnMBB1(
+        beta_symbol_name=beta_name,
+        temperature_symbol_name=temperature_name,
+    )
+
+
+def make_dust_xref_template(templates: Templates, beta_name: str, xref_name: str):
+    """Build the xRef dust template with region-specific symbols."""
+    return templates.ReturnMBB1_xRef(
+        beta_symbol_name=beta_name,
+        xref_symbol_name=xref_name,
+    )
+
+
+def add_synch_components_to_dmatrix(
+    dmt: DMatrix,
+    templates: Templates,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+) -> None:
+    """Add uniform or region-wise synchrotron components to a DMatrix."""
+    if synch_region_masks is None:
+        dmt.AddD(templates.ReturnPowerLawSynch())
+        return
+
+    for index, region_mask in enumerate(synch_region_masks):
+        beta_name = region_parameter_name("beta_s", "sreg", index)
+        dmt.AddD(make_synch_template(templates, beta_name), region_mask=region_mask)
+
+
+def load_synch_region_masks(
+    fit_parser: configparser.ConfigParser,
+    fitconfig_dir: Path,
+    maskname: str,
+    nside: int,
+) -> list[numpy.ndarray] | None:
+    """Load optional Q/U-expanded synchrotron region masks from config."""
+    mask_setting = get_optional_config_value(
+        fit_parser,
+        ("regions", "synch_region_masks"),
+        ("par", "synch_region_masks"),
+    )
+    if mask_setting is None:
+        return None
+
+    analysis_mask = healpy.read_map(
+        maskname,
+        field=0,
+        nest=False,
+        dtype=numpy.float64,
+    )
+    analysis_mask = healpy.ud_grade(analysis_mask, nside_out=nside) != 0.0
+    region_masks = [
+        restrict_region_mask_to_observed_qu(
+            numpy.load(resolve_path(fitconfig_dir, mask_path)).astype(bool),
+            analysis_mask,
+        )
+        for mask_path in mask_setting.split()
+    ]
+    observed_analysis_mask = numpy.ones(
+        int(numpy.count_nonzero(analysis_mask)) * 2,
+        dtype=bool,
+    )
+    validate_region_masks(region_masks, observed_analysis_mask)
+    return region_masks
+
+
+def restrict_region_mask_to_observed_qu(
+    region_mask: numpy.ndarray,
+    analysis_mask: numpy.ndarray,
+) -> numpy.ndarray:
+    """Return a region mask in the observed [Q..., U...] vector layout."""
+    n_pix = len(analysis_mask)
+    n_obs = int(numpy.count_nonzero(analysis_mask))
+    if region_mask.shape == (n_pix,):
+        return expand_to_qu(region_mask[analysis_mask])
+    if region_mask.shape == (2 * n_pix,):
+        return numpy.concatenate(
+            [
+                region_mask[:n_pix][analysis_mask],
+                region_mask[n_pix:][analysis_mask],
+            ]
+        )
+    if region_mask.shape == (2 * n_obs,):
+        return region_mask
+    raise ValueError(
+        "Region mask shape must match pixel, full Q/U, or observed Q/U layout: "
+        f"{region_mask.shape} is incompatible with {n_pix} pixels and {n_obs} "
+        "observed pixels"
+    )
 
 
 def read_cell(cl_s_name: str | Path, nside: int, is_scalar: bool = True) -> FloatArray:
@@ -564,6 +732,8 @@ def test_fg_with_noise_cov(
     isdust_map: bool | None = None,
     issynch_map: bool | None = None,
     input_dir: str | None = None,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_s_region_inits: Sequence[float] | None = None,
 ) -> DeltaMap:
     """Prepare a DeltaMap fit using the standard dust-temperature parameterization.
 
@@ -649,7 +819,7 @@ def test_fg_with_noise_cov(
     if isdust:
         dmt.AddD(mbb1)
     if issynch:
-        dmt.AddD(synch)
+        add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
 
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
@@ -706,6 +876,14 @@ def test_fg_with_noise_cov(
         initial_params = {"r": [0.0, (0.0, 2.0)], "beta_s": [-3.47, (-10.0, -0.01)]}
     else:
         initial_params = {"r": [0.0, (0.0, 2.0)]}
+    if synch_region_masks is not None and "beta_s" in initial_params:
+        expand_region_parameter_inits(
+            initial_params,
+            "beta_s",
+            "sreg",
+            len(synch_region_masks),
+            beta_s_region_inits,
+        )
     dmp.SetParameterInitial(initial_params)
     return dmp
 
@@ -740,6 +918,8 @@ def test_fg_with_noise_cov_xref(
     isdust_map: bool | None = None,
     issynch_map: bool | None = None,
     input_dir: str | None = None,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_s_region_inits: Sequence[float] | None = None,
 ) -> DeltaMap:
     """Prepare a DeltaMap fit using the ``x^R`` dust parameterization.
 
@@ -826,7 +1006,7 @@ def test_fg_with_noise_cov_xref(
     if isdust:
         dmt.AddD(mbb1)
     if issynch:
-        dmt.AddD(synch)
+        add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
 
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
@@ -882,6 +1062,14 @@ def test_fg_with_noise_cov_xref(
         initial_params = {"r": [0.0, (0.0, 2.0)], "beta_s": [-3.47, (-10.0, -0.01)]}
     else:
         initial_params = {"r": [0.0, (0.0, 2.0)]}
+    if synch_region_masks is not None and "beta_s" in initial_params:
+        expand_region_parameter_inits(
+            initial_params,
+            "beta_s",
+            "sreg",
+            len(synch_region_masks),
+            beta_s_region_inits,
+        )
     dmp.SetParameterInitial(initial_params)
     return dmp
 
@@ -987,6 +1175,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     maskname = resolve_path(config_dir, get_config_value(map_parser, ("simulation", "maskname"), ("simpar", "maskname")))
+    synch_region_masks = load_synch_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+    )
+    beta_s_region_inits = parse_optional_float_list(
+        fit_parser,
+        ("regions", "beta_s_region_inits"),
+        ("par", "beta_s_region_inits"),
+    )
 
     dmp = None
 
@@ -1015,6 +1214,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             beta_d_mean=dust_beta_d.mean(),
             seed=args.seed,
             input_dir=input_dir,
+            synch_region_masks=synch_region_masks,
+            beta_s_region_inits=beta_s_region_inits,
         )
     else:
         dmp = test_fg_with_noise_cov_xref(
@@ -1041,6 +1242,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             beta_d_mean=dust_beta_d.mean(),
             seed=args.seed,
             input_dir=input_dir,
+            synch_region_masks=synch_region_masks,
+            beta_s_region_inits=beta_s_region_inits,
         )
 
     dmp.SetParameters(values=params)

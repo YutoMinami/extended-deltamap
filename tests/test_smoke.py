@@ -261,6 +261,82 @@ class SmokeTests(unittest.TestCase):
         self.assertIs(dmatrix.column_masks[0], mask0)
         self.assertIs(dmatrix.column_masks[1], mask1)
 
+    def test_region_parameter_initials_expand_to_scalar_names(self) -> None:
+        initial_params = {
+            "r": [0.0, (0.0, 2.0)],
+            "beta_s": [-3.47, (-10.0, -0.01)],
+        }
+
+        expanded = example_testdeltamap.expand_region_parameter_inits(
+            initial_params,
+            "beta_s",
+            "sreg",
+            2,
+            [-3.1, -3.6],
+        )
+
+        self.assertNotIn("beta_s", expanded)
+        self.assertEqual(expanded["beta_s_sreg0"], [-3.1, (-10.0, -0.01)])
+        self.assertEqual(expanded["beta_s_sreg1"], [-3.6, (-10.0, -0.01)])
+
+    def test_region_synch_components_add_symbols_and_masks(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        mask0 = np.array([True, False, True, False])
+        mask1 = np.array([False, True, False, True])
+
+        example_testdeltamap.add_synch_components_to_dmatrix(
+            dmatrix,
+            templates,
+            [mask0, mask1],
+        )
+        dmatrix.SetFreqs([40.0, 60.0, 140.0], [None, None, None])
+        dmatrix.PrepareDMatrix(order=1)
+
+        params_by_component = [
+            [param.name for param in params] for params in dmatrix.d_params
+        ]
+        self.assertEqual(params_by_component, [["beta_s_sreg0"], ["beta_s_sreg1"]])
+        self.assertIs(dmatrix.column_masks[0], mask0)
+        self.assertIs(dmatrix.column_masks[1], mask0)
+        self.assertIs(dmatrix.column_masks[2], mask1)
+        self.assertIs(dmatrix.column_masks[3], mask1)
+
+    def test_region_masks_are_restricted_to_observed_qu_layout(self) -> None:
+        analysis_mask = np.array([True, False, True])
+        pixel_region_mask = np.array([True, False, False])
+        full_qu_region_mask = np.array([True, False, False, True, False, False])
+        observed_qu_region_mask = np.array([True, False, True, False])
+
+        expected = np.array([True, False, True, False])
+        self.assertTrue(
+            np.array_equal(
+                example_testdeltamap.restrict_region_mask_to_observed_qu(
+                    pixel_region_mask,
+                    analysis_mask,
+                ),
+                expected,
+            )
+        )
+        self.assertTrue(
+            np.array_equal(
+                example_testdeltamap.restrict_region_mask_to_observed_qu(
+                    full_qu_region_mask,
+                    analysis_mask,
+                ),
+                expected,
+            )
+        )
+        self.assertTrue(
+            np.array_equal(
+                example_testdeltamap.restrict_region_mask_to_observed_qu(
+                    observed_qu_region_mask,
+                    analysis_mask,
+                ),
+                expected,
+            )
+        )
+
     def test_count_component_terms_matches_second_order_dust_columns(self) -> None:
         self.assertEqual(example_testdeltamap.count_component_terms(2, 0), 1)
         self.assertEqual(example_testdeltamap.count_component_terms(2, 1), 3)

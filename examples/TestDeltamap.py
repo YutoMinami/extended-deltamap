@@ -214,7 +214,11 @@ def expand_region_parameter_inits(
     region_count: int,
     region_values: Sequence[float] | None = None,
 ) -> dict[str, list[float | tuple[float, float]]]:
-    """Expand one scalar parameter entry into region-wise scalar entries."""
+    """Expand one scalar parameter entry into region-wise scalar entries.
+
+    This mutates ``initial_params`` in place and returns the same dictionary so
+    callers can either use the return value or rely on the mutation.
+    """
     if region_count <= 0:
         raise ValueError("region_count must be positive")
     if parameter_name not in initial_params:
@@ -301,19 +305,41 @@ def load_synch_region_masks(
         dtype=numpy.float64,
     )
     analysis_mask = healpy.ud_grade(analysis_mask, nside_out=nside) != 0.0
-    region_masks = [
-        restrict_region_mask_to_observed_qu(
-            numpy.load(resolve_path(fitconfig_dir, mask_path)).astype(bool),
-            analysis_mask,
+    region_masks = []
+    for mask_path in mask_setting.split():
+        region_mask = numpy.load(resolve_path(fitconfig_dir, mask_path)).astype(bool)
+        validate_region_mask_nside(region_mask, analysis_mask, nside)
+        region_masks.append(
+            restrict_region_mask_to_observed_qu(region_mask, analysis_mask)
         )
-        for mask_path in mask_setting.split()
-    ]
     observed_analysis_mask = numpy.ones(
         int(numpy.count_nonzero(analysis_mask)) * 2,
         dtype=bool,
     )
     validate_region_masks(region_masks, observed_analysis_mask)
     return region_masks
+
+
+def validate_region_mask_nside(
+    region_mask: numpy.ndarray,
+    analysis_mask: numpy.ndarray,
+    nside: int,
+) -> None:
+    """Raise if a region mask cannot match the configured nside."""
+    n_pix = healpy.nside2npix(nside)
+    if analysis_mask.shape != (n_pix,):
+        raise ValueError(
+            "Analysis mask shape is inconsistent with configured nside "
+            f"{nside}: got {analysis_mask.shape}, expected {(n_pix,)}"
+        )
+    n_obs = int(numpy.count_nonzero(analysis_mask))
+    valid_shapes = {(n_pix,), (2 * n_pix,), (2 * n_obs,)}
+    if region_mask.shape not in valid_shapes:
+        raise ValueError(
+            "Region mask shape is inconsistent with configured nside "
+            f"{nside}: got {region_mask.shape}, expected one of "
+            f"{sorted(valid_shapes)}"
+        )
 
 
 def restrict_region_mask_to_observed_qu(

@@ -337,6 +337,35 @@ class SmokeTests(unittest.TestCase):
             )
         )
 
+    def test_region_mask_nside_validation_rejects_wrong_shapes(self) -> None:
+        analysis_mask = np.array([True, False] * 6)
+
+        example_testdeltamap.validate_region_mask_nside(
+            np.ones(12, dtype=bool),
+            analysis_mask,
+            nside=1,
+        )
+        example_testdeltamap.validate_region_mask_nside(
+            np.ones(24, dtype=bool),
+            analysis_mask,
+            nside=1,
+        )
+
+        with self.assertRaisesRegex(ValueError, "configured nside"):
+            example_testdeltamap.validate_region_mask_nside(
+                np.ones(8, dtype=bool),
+                analysis_mask,
+                nside=1,
+            )
+
+    def test_region_mask_nside_validation_rejects_wrong_analysis_mask(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Analysis mask shape"):
+            example_testdeltamap.validate_region_mask_nside(
+                np.ones(12, dtype=bool),
+                np.ones(8, dtype=bool),
+                nside=1,
+            )
+
     def test_count_component_terms_matches_second_order_dust_columns(self) -> None:
         self.assertEqual(example_testdeltamap.count_component_terms(2, 0), 1)
         self.assertEqual(example_testdeltamap.count_component_terms(2, 1), 3)

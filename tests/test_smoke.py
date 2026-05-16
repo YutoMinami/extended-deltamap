@@ -351,6 +351,26 @@ class SmokeTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(factor)))
         self.assertTrue(np.allclose(reconstructed, reconstructed.T))
 
+    def test_masked_noise_block_applies_row_and_column_masks(self) -> None:
+        dmp = DeltaMap()
+        noise_block = np.array([[1.0, 2.0], [3.0, 4.0]])
+        row_mask = np.array([True, False])
+        column_mask = np.array([False, True])
+
+        masked = dmp._masked_noise_block(
+            noise_block,
+            row_mask=row_mask,
+            column_mask=column_mask,
+        )
+
+        self.assertTrue(
+            np.array_equal(masked, np.array([[0.0, 2.0], [0.0, 0.0]]))
+        )
+        self.assertIs(dmp._masked_noise_block(noise_block), noise_block)
+
+        with self.assertRaisesRegex(ValueError, "Region mask length"):
+            dmp._masked_noise_block(noise_block, row_mask=np.array([True]))
+
 
 if __name__ == "__main__":
     unittest.main()

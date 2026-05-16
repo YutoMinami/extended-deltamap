@@ -506,13 +506,19 @@ class DeltaMap:
             if self.verbose:
                 print(str(param) + ": ", self.param_values[param.name])
         D = sympy.matrix2numpy(D, dtype=numpy.float64)
+        column_masks = self._column_masks(D.shape[1])
         matrix_list = []
         for i in range(self.dmtrx.D_matrix.shape[1]):
             i_list = []
             for j in range(self.dmtrx.D_matrix.shape[1]):
                 element = numpy.zeros_like(self.NI_list[0])
                 for k in range(len(self.NI_list)):
-                    element += D[k, i] * self.NI_list[k] * D[k, j]
+                    masked_ni = self._masked_noise_block(
+                        self.NI_list[k],
+                        row_mask=column_masks[i],
+                        column_mask=column_masks[j],
+                    )
+                    element += D[k, i] * masked_ni * D[k, j]
                 i_list.append(element)
 
             matrix_list.append(i_list)
@@ -528,7 +534,11 @@ class DeltaMap:
             i_list = []
             element = numpy.zeros_like(self.NI_list[0])
             for j in range(len(self.NI_list)):
-                element += D[j, i] * self.NI_list[j]
+                masked_ni = self._masked_noise_block(
+                    self.NI_list[j],
+                    row_mask=column_masks[i],
+                )
+                element += D[j, i] * masked_ni
             i_list.append(element)
             matrix_list.append(i_list)
         self.DTNIDc = numpy.block(matrix_list)
@@ -544,10 +554,47 @@ class DeltaMap:
             # element = numpy.zeros_like(self.NI_list[0])
             element = numpy.zeros_like(self.meanvec[0])
             for j in range(len(self.NI_list)):
-                element += D[j, i] * (self.NI_list[j] @ self.meanvec[j])
+                masked_ni = self._masked_noise_block(
+                    self.NI_list[j],
+                    row_mask=column_masks[i],
+                )
+                element += D[j, i] * (masked_ni @ self.meanvec[j])
             i_list.append(element)
             matrix_list.append(i_list)
         self.DTNIM = numpy.block(matrix_list)
+
+    def _column_masks(self, n_columns):
+        """Return D-matrix column masks, defaulting to the unmasked path."""
+        column_masks = getattr(self.dmtrx, "column_masks", None)
+        if not column_masks:
+            return [None] * n_columns
+        if len(column_masks) != n_columns:
+            raise ValueError(
+                "DMatrix column mask count must match D-matrix column count: "
+                f"{len(column_masks)} != {n_columns}"
+            )
+        return column_masks
+
+    def _masked_noise_block(self, noise_block, row_mask=None, column_mask=None):
+        """Apply optional row/column region masks to one noise-inverse block."""
+        masked_block = noise_block
+        if row_mask is not None:
+            row_mask = self._validate_noise_mask(row_mask, noise_block.shape[0])
+            masked_block = row_mask[:, None] * masked_block
+        if column_mask is not None:
+            column_mask = self._validate_noise_mask(column_mask, noise_block.shape[1])
+            masked_block = masked_block * column_mask[None, :]
+        return masked_block
+
+    def _validate_noise_mask(self, mask, expected_size):
+        """Return a numeric mask vector after checking its length."""
+        mask = numpy.asarray(mask, dtype=numpy.float64)
+        if mask.shape != (expected_size,):
+            raise ValueError(
+                "Region mask length must match noise block size: "
+                f"{mask.shape} != ({expected_size},)"
+            )
+        return mask
 
     def CalcDTNID_I_DTNIM(self):
         """Solve the projected normal equations for the mean-vector term."""

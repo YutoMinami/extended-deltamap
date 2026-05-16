@@ -1,7 +1,7 @@
 # HANDOFF
 
 ## Current branch
-- `feature/fix-deltamap-main-entrypoint`
+- `feature/regionwise-foreground-parameters`
 
 ## Current state
 - The package layout is in place under `extended_deltamap/` and the main
@@ -102,8 +102,9 @@ Start with synchrotron-only, 2 fixed regions, beta_s only, first-order fit.
 
 ## Region-wise implementation status
 
-Implemented on branch `feature/regionwise-foreground-parameters` through Step 5.
-The working tree was clean after commit `84174bb Add synchrotron region parameter setup`.
+Implemented on branch `feature/regionwise-foreground-parameters` through the
+first end-to-end 2-region synchrotron fit. The working tree was clean after
+commit `a90ced4 Add two-region synchrotron fit example`.
 
 Completed commits for this phase:
 - `c17e641 Add synchrotron brightness region mask script`
@@ -117,6 +118,9 @@ Completed commits for this phase:
 - `7c39722 Document CalcH no-mask regression test`
 - `36635dd Cover CalcH matrix no-mask regression`
 - `84174bb Add synchrotron region parameter setup`
+- `535d040 Document Step 5 review follow-ups`
+- `f2634a1 Tighten region mask setup validation`
+- `a90ced4 Add two-region synchrotron fit example`
 
 What is now implemented:
 - `scripts/make_synch_brightness_regions.py` creates two synchrotron regions
@@ -154,6 +158,11 @@ What is now implemented:
   - `[regions] synch_region_masks`
   - `[regions] beta_s_region_inits`
   - legacy `[par]` keys with the same names also work.
+- `examples/Synch_var_3freq_regionwise_r1e-2.ini` enables the local two-region
+  synchrotron prototype using the median-split masks under `data/regions/`.
+- `DeltaMap` now identifies the tensor-to-scalar ratio by exact parameter name
+  (`param.name == "r"`), so region names such as `beta_s_sreg0` are not
+  accidentally treated as `r` parameters.
 
 Important implementation detail:
 - Saved region masks may be pixel masks, full-sky Q/U masks, or already in the
@@ -166,7 +175,7 @@ Important implementation detail:
 
 Validation completed:
 - `uv run python -m unittest tests.test_smoke -v`
-  - `21` tests passed.
+  - `24` tests passed.
 - `uv run python -m py_compile examples/TestDeltamap.py`
 - `uv run python -m py_compile extended_deltamap/deltamap.py`
 - `git diff --check`
@@ -179,15 +188,21 @@ Validation completed:
     `{'r': 0.0, 'beta_s_sreg0': -3.1, 'beta_s_sreg1': -3.6}`
   - `DTNIDc.shape == (856, 214)`
   - `DTNIM.shape == (856, 1)`
+- Actual 2-region synchrotron fit now completes with:
+  `DELTAMAP_DUST_BETA_MAP=data/pysm_2/dust_beta.fits DELTAMAP_DUST_TEMP_MAP=data/pysm_2/dust_temp.fits uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_regionwise_r1e-2.ini 1`
+- Local seed-1 output:
+  - `r = 0.0118065453 +/- 0.0035853502`
+  - `beta_s_sreg0 = -2.9322997718 +/- 0.0287338953`
+  - `beta_s_sreg1 = -2.9819950386 +/- 0.0459051613`
 
 Remaining immediate work:
-- Add or copy a small example fit config that enables `[regions]` with the two
-  local synchrotron region masks and `beta_s_region_inits`.
-- Run the actual 2-region synchrotron fit end-to-end, not just setup and
-  `CalcH_matrix()`.
-- Inspect whether `beta_s_sreg0`, `beta_s_sreg1`, and `r` recover sensibly.
-- If the fit is unstable, first check mask sizes, condition numbers, and whether
-  weak priors or more frequency channels are needed.
+- Run multiple seeds for `examples/Synch_var_3freq_regionwise_r1e-2.ini` and
+  compare recovered `r`, `beta_s_sreg0`, and `beta_s_sreg1` against the
+  unregioned synchrotron baseline.
+- Inspect condition numbers and mask-size sensitivity if any seed becomes
+  unstable.
+- After the 2-region baseline looks stable, try 4 regions before moving toward
+  the longer-term 8-10 region clustering target.
 
 ### Step 1 — Region mask creation
 - Create boolean pixel masks of shape `(n_pix,)` for each region.

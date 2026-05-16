@@ -14,41 +14,9 @@
 - Check whether `nside=4` is simply too coarse to constrain the added
   second-order sky-side terms; low spatial information may be part of why the
   `order=2` likelihood becomes unstable even when the first-order model works.
-- Pre-Step-4 cleanup A: replace `_count_component_terms` in `dmatrix.py` with a
-  call to `_build_component_terms(sympy.Integer(1), ...)` and `len()` so the two
-  implementations cannot silently diverge. Update the corresponding smoke test to
-  confirm it still passes.
-- Pre-Step-4 cleanup B: move `expand_to_qu` and `validate_region_masks` from
-  `scripts/make_synch_brightness_regions.py` into `extended_deltamap/regions.py`;
-  update the script to import from there; export both from `__init__.py`; add a
-  smoke test confirming the import and that `validate_region_masks` raises on
-  overlapping inputs. Do not move the script-level I/O helpers.
-- Clarify expand_region_parameter_inits mutation contract: add a docstring note
-  that it modifies initial_params in-place and returns the same object, so
-  callers can either capture the return value or rely on mutation consistently.
-- Add nside validation in load_synch_region_masks: after loading each region
-  mask .npy file, check that its length is consistent with
-  healpy.nside2npix(nside) before calling restrict_region_mask_to_observed_qu,
-  so a nside mismatch fails loudly instead of silently selecting wrong pixels.
-- Add a regression test for CalcH_matrix confirming that the no-mask path
-  (all column_masks=None) produces the same DTNID, DTNIDc, and DTNIM values
-  as before Step 4. Can be a unit test with a small synthetic NI_list and D
-  matrix rather than a full end-to-end run.
-- Implement region-wise foreground-parameter prototype following the 5-step
-  plan (see HANDOFF.md for detail). Start with synchrotron-only, 2 fixed
-  regions, beta_s only, first-order Delta-map.
-  Step 1: region mask creation — boolean arrays of shape (size,), expand pixel
-    mask to Q/U, validate disjoint and full coverage.
-  Step 2: add symbol_name kwarg to Templates methods so per-region symbols
-    beta_s_sreg0, beta_s_sreg1, etc. can be generated.
-  Step 3: add column_masks list to DMatrix; AddD() accepts optional region_mask;
-    each derivative column inherits the same mask as its parent component.
-  Step 4: update CalcH_matrix() to apply mask operators row/column-wise when
-    building each (i,j) pixel-space block of DTNID, DTNIDc, and DTNIM.
-  Step 5: add parameter expansion helper in TestDeltamap.py to convert
-    beta_s=[v0,v1] into beta_s_sreg0, beta_s_sreg1 inits entries.
-  Validate with column_masks=None first (existing tests must still pass), then
-  enable masks and check beta_s recovery for the 2-region synchrotron case.
+- Region-wise foreground-parameter prototype is implemented and has passed the
+  first end-to-end 2-region synchrotron-only fit. Next, run more seeds and
+  compare against the unregioned baseline before increasing region count.
 - Keep dust and synchrotron region sets independent in the design; their
   clustering maps, region masks, parameter names, and final region counts may
   differ.
@@ -86,6 +54,13 @@
 - Added a `unittest` smoke/regression suite covering package import, the fixed `extended_deltamap.deltamap` module entrypoint, one minimal covariance build, and repeated `DMatrix` rebuilds.
 - Confirmed that `uv run python examples/run_pysm3.py examples/LTD_config.ini` completes successfully in the local environment.
 - Confirmed that `uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_r1e-2.ini 1` completes successfully when `DELTAMAP_DUST_BETA_MAP` and `DELTAMAP_DUST_TEMP_MAP` are set to local FITS inputs.
+- Completed the synchrotron-only 2-region foreground-parameter prototype:
+  median low-frequency brightness masks, region-specific `beta_s` symbols,
+  `DMatrix` column masks, masked `CalcH_matrix()` blocks, config-driven
+  region parameter expansion, and one end-to-end fit.
+- Confirmed that
+  `uv run python examples/TestDeltamap.py examples/LTD_config.ini examples/Synch_var_3freq_regionwise_r1e-2.ini 1`
+  completes locally with the two median-split region masks.
 
 ## Future methodology update: second-order Delta-map expansion
 - Design the second-order foreground expansion before changing `extended_deltamap/dmatrix.py`; this is a future methodology update, not part of the current bug-fix pass.

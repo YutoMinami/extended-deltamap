@@ -79,6 +79,7 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(first_shape, (3, 2))
         self.assertEqual(second_shape, first_shape)
         self.assertEqual(uniform_shape, (3, 1))
+        self.assertEqual(dmatrix.column_masks, [None])
 
     def test_dmatrix_second_order_helper_uses_stable_unique_pairs(self) -> None:
         templates = Templates()
@@ -196,6 +197,34 @@ class SmokeTests(unittest.TestCase):
         ]
         self.assertEqual(params_by_component, [["beta_s_sreg0"], ["beta_s_sreg1"]])
         self.assertEqual(dmatrix.D_matrix.shape, (3, 4))
+
+    def test_dmatrix_expands_component_masks_to_derivative_columns(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        mask0 = np.array([True, False, True, False])
+        mask1 = np.array([False, True, False, True])
+        dmatrix.AddD(
+            templates.ReturnPowerLawSynch(symbol_name="beta_s_sreg0"),
+            region_mask=mask0,
+        )
+        dmatrix.AddD(
+            templates.ReturnPowerLawSynch(symbol_name="beta_s_sreg1"),
+            region_mask=mask1,
+        )
+        dmatrix.SetFreqs([40.0, 60.0, 140.0], [None, None, None])
+
+        dmatrix.PrepareDMatrix(order=1)
+
+        self.assertEqual(len(dmatrix.column_masks), 4)
+        self.assertIs(dmatrix.column_masks[0], mask0)
+        self.assertIs(dmatrix.column_masks[1], mask0)
+        self.assertIs(dmatrix.column_masks[2], mask1)
+        self.assertIs(dmatrix.column_masks[3], mask1)
+
+        dmatrix.PrepareUniformDMatrix()
+        self.assertEqual(len(dmatrix.column_masks), 2)
+        self.assertIs(dmatrix.column_masks[0], mask0)
+        self.assertIs(dmatrix.column_masks[1], mask1)
 
     def test_count_component_terms_matches_second_order_dust_columns(self) -> None:
         self.assertEqual(example_testdeltamap.count_component_terms(2, 0), 1)

@@ -25,6 +25,8 @@ class DMatrix:
         self.D_matrix = None
         self.gnu = None
         self.verbose = verbose
+        self.component_masks = []
+        self.column_masks = []
         pass
 
     def SetGnu(self, gnu):
@@ -35,12 +37,14 @@ class DMatrix:
         """
         self.gnu = gnu
 
-    def AddD(self, f_D):
+    def AddD(self, f_D, region_mask=None):
         """Register one foreground scaling law.
 
         Args:
             f_D: Symbolic frequency scaling function containing ``nu`` and any
                 fit parameters.
+            region_mask: Optional Q/U-expanded mask associated with this
+                component. Derivative columns inherit the same mask.
         """
         symbols = f_D.free_symbols
         params = []
@@ -49,6 +53,7 @@ class DMatrix:
                 params.append(param)
         self.d_params.append(self._sorted_params(params))
         self.d_funcs.append(f_D)
+        self.component_masks.append(region_mask)
 
     def SetFreqs(self, freqs, width):
         """Set the observing frequencies used to evaluate the matrix.
@@ -96,14 +101,45 @@ class DMatrix:
                 component_terms.append(sympy.simplify(sympy.diff(func, param)))
 
         for derivative_order in range(2, max_order + 1):
-            for derivative_multi_index in combinations_with_replacement(ordered_params, derivative_order):
-                if diff_param is not None and diff_param not in {param.name for param in derivative_multi_index}:
+            for derivative_multi_index in combinations_with_replacement(
+                ordered_params,
+                derivative_order,
+            ):
+                derivative_param_names = {
+                    param.name for param in derivative_multi_index
+                }
+                if diff_param is not None and diff_param not in derivative_param_names:
                     continue
                 derivative_term = sympy.diff(func, *derivative_multi_index)
                 derivative_term *= self._derivative_prefactor(derivative_multi_index)
                 component_terms.append(sympy.simplify(derivative_term))
 
         return component_terms
+
+    def _count_component_terms(self, params, max_order=1, diff_param=None):
+        """Return how many columns one component contributes."""
+        ordered_params = self._sorted_params(params)
+        term_count = 1
+
+        if max_order >= 1:
+            for param in ordered_params:
+                if diff_param is not None and diff_param not in param.name:
+                    continue
+                term_count += 1
+
+        for derivative_order in range(2, max_order + 1):
+            for derivative_multi_index in combinations_with_replacement(
+                ordered_params,
+                derivative_order,
+            ):
+                derivative_param_names = {
+                    param.name for param in derivative_multi_index
+                }
+                if diff_param is not None and diff_param not in derivative_param_names:
+                    continue
+                term_count += 1
+
+        return term_count
 
     def _build_template_terms(self, max_order=1, diff_param=None):
         """Build one fresh list of symbolic template terms for the current settings.
@@ -128,6 +164,18 @@ class DMatrix:
             )
         return template_terms
 
+    def _build_column_masks(self, max_order=1, diff_param=None):
+        """Build column masks in the same order as the symbolic template terms."""
+        column_masks = []
+        for params, region_mask in zip(self.d_params, self.component_masks):
+            term_count = self._count_component_terms(
+                params,
+                max_order=max_order,
+                diff_param=diff_param,
+            )
+            column_masks.extend([region_mask] * term_count)
+        return column_masks
+
     def _evaluate_template_terms(self, template_terms):
         """Evaluate symbolic template terms at each configured frequency."""
         l_Dmatrix = []
@@ -136,10 +184,18 @@ class DMatrix:
             l_Dmatrix.append(nu_D)
         return l_Dmatrix
 
-    def _set_matrix_from_template_terms(self, template_terms):
+    def _set_matrix_from_template_terms(self, template_terms, column_masks=None):
         """Store evaluated template terms and keep ``dim_params`` in sync."""
         self.D_matrix_template = template_terms
         self.dim_params = len(template_terms)
+        if column_masks is None:
+            column_masks = [None] * self.dim_params
+        if len(column_masks) != self.dim_params:
+            raise ValueError(
+                "column mask count must match D-matrix column count: "
+                f"{len(column_masks)} != {self.dim_params}"
+            )
+        self.column_masks = column_masks
         l_Dmatrix = self._evaluate_template_terms(template_terms)
         if self.verbose:
             print(self.dim_params, self.n_freqs)
@@ -154,6 +210,7 @@ class DMatrix:
         """
         self.D_matrix_template = self._build_template_terms(max_order=order)
         self.dim_params = len(self.D_matrix_template)
+        self.column_masks = self._build_column_masks(max_order=order)
 
     def PrepareOneDiffDMatrix(self, diff_param):
         """Build a matrix that includes derivatives for one selected parameter.
@@ -163,7 +220,8 @@ class DMatrix:
                 columns to include.
         """
         self._set_matrix_from_template_terms(
-            self._build_template_terms(max_order=1, diff_param=diff_param)
+            self._build_template_terms(max_order=1, diff_param=diff_param),
+            self._build_column_masks(max_order=1, diff_param=diff_param),
         )
 
     def PrepareUniformDMatrix(self):
@@ -177,7 +235,8 @@ class DMatrix:
             order: Highest derivative order to include.
         """
         self._set_matrix_from_template_terms(
-            self._build_template_terms(max_order=order)
+            self._build_template_terms(max_order=order),
+            self._build_column_masks(max_order=order),
         )
 
     def CalcDMatrix(self):

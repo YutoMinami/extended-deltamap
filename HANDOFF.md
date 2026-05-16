@@ -194,15 +194,29 @@ Validation completed:
   - `r = 0.0118065453 +/- 0.0035853502`
   - `beta_s_sreg0 = -2.9322997718 +/- 0.0287338953`
   - `beta_s_sreg1 = -2.9819950386 +/- 0.0459051613`
+- Seeds 1-10 were run for both the unregioned and 2-region synchrotron
+  configs. All runs completed and wrote CSV outputs under
+  `examples/test_results/`.
+- Seed 1-10 unregioned summary:
+  - `r`: mean `0.011031288`, sample std `0.0033153087`,
+    min `0.0067588135`, max `0.01589814`
+  - `beta_s`: mean `-2.9924456`, sample std `0.12544139`,
+    min `-3.2529467`, max `-2.8314063`
+- Seed 1-10 2-region summary:
+  - `r`: mean `0.010986448`, sample std `0.0036426419`,
+    min `0.0064164764`, max `0.015859678`
+  - `beta_s_sreg0`: mean `-2.9780265`, sample std `0.058016306`,
+    min `-3.0541201`, max `-2.8910757`
+  - `beta_s_sreg1`: mean `-3.014152`, sample std `0.055480556`,
+    min `-3.0802615`, max `-2.9309276`
 
 Remaining immediate work:
-- Run multiple seeds for `examples/Synch_var_3freq_regionwise_r1e-2.ini` and
-  compare recovered `r`, `beta_s_sreg0`, and `beta_s_sreg1` against the
-  unregioned synchrotron baseline.
-- Inspect condition numbers and mask-size sensitivity if any seed becomes
-  unstable.
-- After the 2-region baseline looks stable, try 4 regions before moving toward
-  the longer-term 8-10 region clustering target.
+- Add a 4-region synchrotron split and run the same seed comparison against the
+  unregioned and 2-region baselines.
+- Inspect condition numbers and mask-size sensitivity if the 4-region fit
+  becomes unstable.
+- If 4 regions remain stable, move toward the longer-term 8-10 region
+  clustering target.
 
 ### Step 1 — Region mask creation
 - Create boolean pixel masks of shape `(n_pix,)` for each region.

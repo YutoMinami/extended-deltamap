@@ -15,8 +15,8 @@
   second-order sky-side terms; low spatial information may be part of why the
   `order=2` likelihood becomes unstable even when the first-order model works.
 - Region-wise foreground-parameter prototype is implemented and has passed the
-  first end-to-end 2-region synchrotron-only fit. Next, run more seeds and
-  compare against the unregioned baseline before increasing region count.
+  first 10-seed 2-region synchrotron-only comparison against the unregioned
+  baseline. Next, try a 4-region split before moving toward clustering.
 - Keep dust and synchrotron region sets independent in the design; their
   clustering maps, region masks, parameter names, and final region counts may
   differ.

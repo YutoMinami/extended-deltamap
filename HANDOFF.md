@@ -240,8 +240,18 @@ Validation completed:
 Remaining immediate work:
 - Add the spatial coefficient path while keeping the existing column-mask path
   as a reference implementation.
-- Validate the new path by checking that 2-region `CalcH_matrix()` and fit
-  outputs match the current column-mask implementation.
+- Validate the new path with two regression tests:
+  1. No-region case: spatial coefficient path (scalar broadcast) must produce
+     identical `DTNID`, `DTNIDc`, and `DTNIM` values to the original scalar
+     `D[k, i]` path.
+  2. 2-region case: spatial coefficient path should be equivalent to the
+     current column-mask path after projecting/removing the redundant
+     region-masked sky-vector copies. The raw matrix shapes should not be
+     identical if the size reduction is working: old column-mask shape scales
+     with region count, while the new spatial-coefficient shape keeps the
+     sky-side column count fixed. Check the expected reduced shapes, compare
+     projected/effective numerical values where practical, and compare
+     likelihood or fit outputs as the end-to-end regression.
 - Re-run the 4-region seed-1 fit with the spatial coefficient path; if it
   completes, run the same seed comparison against the unregioned and 2-region
   baselines.

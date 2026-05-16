@@ -164,6 +164,39 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(dmatrix.D_matrix_template, expected_terms)
         self.assertEqual(dmatrix.dim_params, len(expected_terms))
 
+    def test_templates_accept_region_specific_symbol_names(self) -> None:
+        templates = Templates()
+        synch = templates.ReturnPowerLawSynch(symbol_name="beta_s_sreg0")
+        dust = templates.ReturnMBB1(
+            beta_symbol_name="beta_d_dreg0",
+            temperature_symbol_name="T_d1_dreg0",
+        )
+
+        synch_params = sorted(
+            param.name for param in synch.free_symbols if param.name != "nu"
+        )
+        dust_params = sorted(
+            param.name for param in dust.free_symbols if param.name != "nu"
+        )
+
+        self.assertEqual(synch_params, ["beta_s_sreg0"])
+        self.assertEqual(dust_params, ["T_d1_dreg0", "beta_d_dreg0"])
+
+    def test_dmatrix_uses_region_specific_template_symbols(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        dmatrix.AddD(templates.ReturnPowerLawSynch(symbol_name="beta_s_sreg0"))
+        dmatrix.AddD(templates.ReturnPowerLawSynch(symbol_name="beta_s_sreg1"))
+        dmatrix.SetFreqs([40.0, 60.0, 140.0], [None, None, None])
+
+        dmatrix.PrepareDMatrix(order=1)
+
+        params_by_component = [
+            [param.name for param in params] for params in dmatrix.d_params
+        ]
+        self.assertEqual(params_by_component, [["beta_s_sreg0"], ["beta_s_sreg1"]])
+        self.assertEqual(dmatrix.D_matrix.shape, (3, 4))
+
     def test_count_component_terms_matches_second_order_dust_columns(self) -> None:
         self.assertEqual(example_testdeltamap.count_component_terms(2, 0), 1)
         self.assertEqual(example_testdeltamap.count_component_terms(2, 1), 3)

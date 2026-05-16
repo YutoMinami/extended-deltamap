@@ -21,32 +21,32 @@ class Templates:
     def ReturnFunc(self):
         pass
 
-    def ReturnTestPower(self, nuRef=1.0):
+    def ReturnTestPower(self, nuRef=1.0, symbol_name="beta_d"):
         nu = sympy.Symbol("nu")
-        beta_d = sympy.Symbol("beta_d")
+        beta_d = sympy.Symbol(symbol_name)
         f = pow(nu / nuRef, beta_d)
         return f
 
-    def ReturnPowerLawSynch_Norm(self, nuRef=30.0):
+    def ReturnPowerLawSynch_Norm(self, nuRef=30.0, symbol_name="beta_s"):
         """
         Returns
         Sympy function of one component modified black body
         """
         sigma_beta_s = 0.0632
         nu = sympy.Symbol("nu")
-        beta_s = sympy.Symbol("beta_s") * sigma_beta_s
+        beta_s = sympy.Symbol(symbol_name) * sigma_beta_s
 
         gnu = self.Return_gnu()
         f = sympy.Pow(nu / nuRef, beta_s) * gnu
         return f
 
-    def ReturnPowerLawSynch(self, nuRef=30.0):
+    def ReturnPowerLawSynch(self, nuRef=30.0, symbol_name="beta_s"):
         """
         Returns
         Sympy function of one component modified black body
         """
         nu = sympy.Symbol("nu")
-        beta_s = sympy.Symbol("beta_s")
+        beta_s = sympy.Symbol(symbol_name)
 
         gnu = self.Return_gnu()
 
@@ -61,19 +61,24 @@ class Templates:
         gnu = sympy.Pow(sympy.exp(x_CMB) - 1, 2) / (x_CMB**2 * sympy.exp(x_CMB))
         return gnu
 
-    def ReturnPowerLawDust(self, nuRef=353.0):
+    def ReturnPowerLawDust(self, nuRef=353.0, symbol_name="beta_d"):
         """
         Returns
         Sympy function of one component modified black body
         """
         nu = sympy.Symbol("nu")
-        beta_d = sympy.Symbol("beta_d")
+        beta_d = sympy.Symbol(symbol_name)
 
         gnu = self.Return_gnu()
         f = gnu * pow(nu / nuRef, beta_d)
         return f
 
-    def ReturnMBB1_Norm(self, nuRef=353.0):
+    def ReturnMBB1_Norm(
+        self,
+        nuRef=353.0,
+        beta_symbol_name="beta_d",
+        temperature_symbol_name="T_d1",
+    ):
         """
         Returns
         Sympy function of one component modified black body
@@ -81,32 +86,52 @@ class Templates:
         sigma_T_d = 2.254
         sigma_beta_d = 0.0542
         nu = sympy.Symbol("nu")
-        beta_d = sympy.Symbol("beta_d") * sigma_beta_d
-        T_d = sympy.Symbol("T_d1") * sigma_T_d
+        beta_d = sympy.Symbol(beta_symbol_name) * sigma_beta_d
+        T_d = sympy.Symbol(temperature_symbol_name) * sigma_T_d
 
         x = constants.h * nu * 1.0e9 / constants.k / T_d
         xRef = constants.h * nuRef * 1.0e9 / constants.k / T_d
         gnu = self.Return_gnu()
-        f = gnu * sympy.Pow(nu / nuRef, beta_d + 1) * (sympy.exp(xRef) - 1.0) / (sympy.exp(x) - 1.0)
+        f = (
+            gnu
+            * sympy.Pow(nu / nuRef, beta_d + 1)
+            * (sympy.exp(xRef) - 1.0)
+            / (sympy.exp(x) - 1.0)
+        )
         return f
 
-    def ReturnMBB1_xRef(self, nuRef=353.0):
+    def ReturnMBB1_xRef(
+        self,
+        nuRef=353.0,
+        beta_symbol_name="beta_d",
+        xref_symbol_name="x^R",
+    ):
         """
         Returns
         Sympy function of one component modified black body
         """
         nu = sympy.Symbol("nu")
-        beta_d = sympy.Symbol("beta_d")
-        xRef = sympy.Symbol("x^R")
+        beta_d = sympy.Symbol(beta_symbol_name)
+        xRef = sympy.Symbol(xref_symbol_name)
         # T_d = sympy.Symbol('T_d1')
         # x = constants.h*nu*1.0e9/constants.k/T_d
         x = xRef * (nu / nuRef)
         # xRef = constants.h*nuRef*1.0e9/constants.k/T_d
         gnu = self.Return_gnu()
-        f = gnu * sympy.Pow(nu / nuRef, beta_d + 1) * (sympy.exp(xRef) - 1.0) / (sympy.exp(x) - 1.0)
+        f = (
+            gnu
+            * sympy.Pow(nu / nuRef, beta_d + 1)
+            * (sympy.exp(xRef) - 1.0)
+            / (sympy.exp(x) - 1.0)
+        )
         return f
 
-    def ReturnMBB1_xRef_Norm(self, nuRef=353.0):
+    def ReturnMBB1_xRef_Norm(
+        self,
+        nuRef=353.0,
+        beta_symbol_name="beta_d",
+        xref_symbol_name="x^R",
+    ):
         """
         Returns
         Sympy function of one component modified black body
@@ -115,28 +140,43 @@ class Templates:
         sigma_xRef = 0.09034
         sigma_beta_d = 0.0542
         nu = sympy.Symbol("nu")
-        beta_d = sympy.Symbol("beta_d") * sigma_beta_d
-        xRef = sympy.Symbol("x^R") * sigma_xRef
+        beta_d = sympy.Symbol(beta_symbol_name) * sigma_beta_d
+        xRef = sympy.Symbol(xref_symbol_name) * sigma_xRef
         # T_d = sympy.Symbol('T_d1')
         # x = constants.h*nu*1.0e9/constants.k/T_d
         x = xRef * (nu / nuRef)
         # xRef = constants.h*nuRef*1.0e9/constants.k/T_d
         gnu = self.Return_gnu()
-        f = gnu * sympy.Pow(nu / nuRef, beta_d + 1) * (sympy.exp(xRef) - 1.0) / (sympy.exp(x) - 1.0)
+        f = (
+            gnu
+            * sympy.Pow(nu / nuRef, beta_d + 1)
+            * (sympy.exp(xRef) - 1.0)
+            / (sympy.exp(x) - 1.0)
+        )
         return f
 
-    def ReturnMBB1(self, nuRef=353.0):
+    def ReturnMBB1(
+        self,
+        nuRef=353.0,
+        beta_symbol_name="beta_d",
+        temperature_symbol_name="T_d1",
+    ):
         """
         Returns
         Sympy function of one component modified black body
         """
         nu = sympy.Symbol("nu")
-        beta_d = sympy.Symbol("beta_d")
-        T_d = sympy.Symbol("T_d1")
+        beta_d = sympy.Symbol(beta_symbol_name)
+        T_d = sympy.Symbol(temperature_symbol_name)
         x = constants.h * nu * 1.0e9 / constants.k / T_d
         xRef = constants.h * nuRef * 1.0e9 / constants.k / T_d
         gnu = self.Return_gnu()
-        f = gnu * sympy.Pow(nu / nuRef, beta_d + 1) * (sympy.exp(xRef) - 1.0) / (sympy.exp(x) - 1.0)
+        f = (
+            gnu
+            * sympy.Pow(nu / nuRef, beta_d + 1)
+            * (sympy.exp(xRef) - 1.0)
+            / (sympy.exp(x) - 1.0)
+        )
         return f
 
     """

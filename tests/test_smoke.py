@@ -371,6 +371,60 @@ class SmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Region mask length"):
             dmp._masked_noise_block(noise_block, row_mask=np.array([True]))
 
+    def test_calc_h_matrix_no_mask_path_matches_manual_blocks(self) -> None:
+        dmp = DeltaMap()
+        dmp.dmtrx = DMatrix()
+        beta = sympy.Symbol("beta")
+        dmp.dmtrx.D_matrix = sympy.Matrix([[1.0, 2.0], [3.0, beta]])
+        dmp.dmtrx.column_masks = [None, None]
+        dmp.params = [beta]
+        dmp.param_values = {"beta": 4.0}
+        dmp.NI_list = [
+            np.array([[2.0, 0.1], [0.1, 1.0]]),
+            np.array([[1.0, 0.2], [0.2, 3.0]]),
+        ]
+        dmp.meanvec = [
+            np.array([[0.5], [1.0]]),
+            np.array([[1.5], [-0.5]]),
+        ]
+        dmp.AL = np.linalg.cholesky(np.eye(2) * 1000.0)
+
+        dmp.CalcH_matrix()
+
+        D = np.array([[1.0, 2.0], [3.0, 4.0]])
+        expected_blocks = []
+        for i in range(2):
+            row_blocks = []
+            for j in range(2):
+                block = np.zeros_like(dmp.NI_list[0])
+                for k, ni_k in enumerate(dmp.NI_list):
+                    block += D[k, i] * ni_k * D[k, j]
+                row_blocks.append(block)
+            expected_blocks.append(row_blocks)
+        expected_dtnid = np.block(expected_blocks)
+
+        expected_dtnidc = np.block(
+            [
+                [sum(D[k, i] * dmp.NI_list[k] for k in range(2))]
+                for i in range(2)
+            ]
+        )
+        expected_dtnim = np.block(
+            [
+                [
+                    sum(
+                        D[k, i] * (dmp.NI_list[k] @ dmp.meanvec[k])
+                        for k in range(2)
+                    )
+                ]
+                for i in range(2)
+            ]
+        )
+
+        self.assertTrue(np.allclose(dmp.DNIDL @ dmp.DNIDL.T, expected_dtnid))
+        self.assertTrue(np.allclose(dmp.DTNIDc, expected_dtnidc))
+        self.assertTrue(np.allclose(dmp.DTNIM, expected_dtnim))
+
 
 if __name__ == "__main__":
     unittest.main()

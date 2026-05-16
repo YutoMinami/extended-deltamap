@@ -192,6 +192,24 @@ are script-level I/O helpers that belong in `scripts/`.
 - Validate that the expanded parameter count matches `len(synch_region_masks)`.
 - Files: `examples/TestDeltamap.py`.
 
+**Watch out — dust template methods have inconsistent keyword argument names:**
+When building the DMatrix loop for dust regions, the kwarg names differ by method:
+- `ReturnMBB1` / `ReturnMBB1_Norm`: `beta_symbol_name`, `temperature_symbol_name`
+- `ReturnMBB1_xRef` / `ReturnMBB1_xRef_Norm`: `beta_symbol_name`, `xref_symbol_name`
+- `ReturnPowerLawDust`: `symbol_name`
+
+Do not call these methods with positional arguments or hardcoded kwarg names scattered
+across the setup loop. Instead, build a small factory or registry in the Step 5 helper
+that maps component type to (method, kwarg dict), e.g.:
+```python
+def make_dust_template(templates, beta_name, temp_name):
+    return templates.ReturnMBB1(
+        beta_symbol_name=beta_name,
+        temperature_symbol_name=temp_name,
+    )
+```
+This keeps the kwarg names in one place and makes the region loop readable.
+
 ### Key design constraints to preserve
 - `A = S0_CMB_I + Σ NI_k` does not change; it has no D dependence.
 - Cross-region DTNID blocks are zero when noise is pixel-diagonal. Full CMB

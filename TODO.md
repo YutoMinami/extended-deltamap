@@ -23,6 +23,13 @@
   update the script to import from there; export both from `__init__.py`; add a
   smoke test confirming the import and that `validate_region_masks` raises on
   overlapping inputs. Do not move the script-level I/O helpers.
+- Clarify expand_region_parameter_inits mutation contract: add a docstring note
+  that it modifies initial_params in-place and returns the same object, so
+  callers can either capture the return value or rely on mutation consistently.
+- Add nside validation in load_synch_region_masks: after loading each region
+  mask .npy file, check that its length is consistent with
+  healpy.nside2npix(nside) before calling restrict_region_mask_to_observed_qu,
+  so a nside mismatch fails loudly instead of silently selecting wrong pixels.
 - Add a regression test for CalcH_matrix confirming that the no-mask path
   (all column_masks=None) produces the same DTNID, DTNIDc, and DTNIM values
   as before Step 4. Can be a unit test with a small synthetic NI_list and D

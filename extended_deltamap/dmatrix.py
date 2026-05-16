@@ -118,28 +118,14 @@ class DMatrix:
 
     def _count_component_terms(self, params, max_order=1, diff_param=None):
         """Return how many columns one component contributes."""
-        ordered_params = self._sorted_params(params)
-        term_count = 1
-
-        if max_order >= 1:
-            for param in ordered_params:
-                if diff_param is not None and diff_param not in param.name:
-                    continue
-                term_count += 1
-
-        for derivative_order in range(2, max_order + 1):
-            for derivative_multi_index in combinations_with_replacement(
-                ordered_params,
-                derivative_order,
-            ):
-                derivative_param_names = {
-                    param.name for param in derivative_multi_index
-                }
-                if diff_param is not None and diff_param not in derivative_param_names:
-                    continue
-                term_count += 1
-
-        return term_count
+        return len(
+            self._build_component_terms(
+                sympy.Integer(1),
+                params,
+                max_order=max_order,
+                diff_param=diff_param,
+            )
+        )
 
     def _build_template_terms(self, max_order=1, diff_param=None):
         """Build one fresh list of symbolic template terms for the current settings.

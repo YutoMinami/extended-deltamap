@@ -23,6 +23,10 @@
   update the script to import from there; export both from `__init__.py`; add a
   smoke test confirming the import and that `validate_region_masks` raises on
   overlapping inputs. Do not move the script-level I/O helpers.
+- Add a regression test for CalcH_matrix confirming that the no-mask path
+  (all column_masks=None) produces the same DTNID, DTNIDc, and DTNIM values
+  as before Step 4. Can be a unit test with a small synthetic NI_list and D
+  matrix rather than a full end-to-end run.
 - Implement region-wise foreground-parameter prototype following the 5-step
   plan (see HANDOFF.md for detail). Start with synchrotron-only, 2 fixed
   regions, beta_s only, first-order Delta-map.

@@ -85,6 +85,10 @@ class DeltaMap:
         self.migrad = True
         self.r_verbose = False
 
+    def _is_r_parameter(self, param):
+        """Return True only for the tensor-to-scalar ratio parameter."""
+        return param.name == "r"
+
     def SetxRPrior(self, meanxR, sigmaxR):
         """Store a Gaussian prior on the dust ``x^R`` parameter.
 
@@ -129,7 +133,7 @@ class DeltaMap:
         """Differentiate the symbolic D matrix with respect to non-``r`` parameters."""
         self.DiffDs = []
         for param in self.params:
-            if "r" in param.name:
+            if self._is_r_parameter(param):
                 continue
             else:
                 self.DiffDs.append(sympy.simplify(sympy.diff(self.dmtrx.D_matrix, param)))
@@ -1326,7 +1330,7 @@ class DeltaMap:
                 break
             pcount = 0
             for param in self.params:
-                if "r" in param.name:
+                if self._is_r_parameter(param):
                     continue
                 else:
                     # self.inits[param.name][0] = fparam[pcount]['value']
@@ -1375,7 +1379,7 @@ class DeltaMap:
         limits = []
         err_params = []
         for param in self.params:
-            if "r" in param.name:
+            if self._is_r_parameter(param):
                 if not isfit_r:
                     continue
                 else:
@@ -1493,7 +1497,7 @@ class DeltaMap:
             The current likelihood value.
         """
         for idx, param in enumerate(self.params):
-            if "r" not in param.name:
+            if not self._is_r_parameter(param):
                 pass
                 # self.param_values[param.name] = self.inits[param.name][0]
             else:
@@ -1512,7 +1516,7 @@ class DeltaMap:
         count = 0
         ##TODO##
         for idx, param in enumerate(self.params):
-            if "r" in param.name:
+            if self._is_r_parameter(param):
                 pass
                 # self.param_values[param.name] = self.inits[param.name][0]
             else:

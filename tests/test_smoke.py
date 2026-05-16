@@ -476,6 +476,18 @@ class SmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Region mask length"):
             dmp._masked_noise_block(noise_block, row_mask=np.array([True]))
 
+    def test_region_parameter_names_are_not_treated_as_r(self) -> None:
+        dmp = DeltaMap()
+        dmp.params = [sympy.Symbol("r"), sympy.Symbol("beta_s_sreg0")]
+        dmp.param_values = {"r": 0.2, "beta_s_sreg0": -3.0}
+        dmp.ReturnChiSquare = lambda: dmp.param_values["beta_s_sreg0"]
+
+        result = dmp.MinimizeWithoutR([-3.5])
+
+        self.assertEqual(result, -3.5)
+        self.assertEqual(dmp.param_values["r"], 0.2)
+        self.assertEqual(dmp.param_values["beta_s_sreg0"], -3.5)
+
     def test_calc_h_matrix_no_mask_path_matches_manual_blocks(self) -> None:
         dmp = DeltaMap()
         dmp.dmtrx = DMatrix()

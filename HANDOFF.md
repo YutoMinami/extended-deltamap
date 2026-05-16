@@ -221,13 +221,30 @@ Validation completed:
 - A direct full iterative 4-region seed-1 fit was stopped after about 4 minutes
   with no CSV output yet. This looks like a runtime/optimization-cost issue
   rather than a setup failure; the same setup reaches `CalcH_matrix()`.
+- Feasibility note for reducing matrix size:
+  use a spatial coefficient / region expansion representation instead of
+  duplicating D columns per region. For synchrotron first-order, keep the
+  sky-side columns as `[f_s, df_s/dbeta_s]` and evaluate their coefficients as
+  pixel vectors:
+  `c_0(k,p) = sum_r m_r(p) f_s(nu_k; beta_r)` and
+  `c_1(k,p) = sum_r m_r(p) df_s/dbeta_s(nu_k; beta_r)`.
+  Then `CalcH_matrix()` uses
+  `c_i[:, None] * N_k^{-1} * c_j[None, :]` instead of scalar `D[k,i]`
+  times column masks. This preserves region-dependent scalar parameters while
+  avoiding the current D-column and H-block growth with region count.
+- The local design note
+  `data/notes/REGIONWISE_PARAMETER_DELTAMAP_JA.md` now records this formula
+  and the implementation plan. The note is under gitignored `data/`, so it is
+  local documentation rather than a tracked artifact.
 
 Remaining immediate work:
-- Decide how to validate the 4-region model efficiently: longer single-seed
-  run, simultaneous fit mode, reduced optimizer iterations, or profiling the
-  repeated matrix solves.
-- After one 4-region fit completes, run the same seed comparison against the
-  unregioned and 2-region baselines.
+- Add the spatial coefficient path while keeping the existing column-mask path
+  as a reference implementation.
+- Validate the new path by checking that 2-region `CalcH_matrix()` and fit
+  outputs match the current column-mask implementation.
+- Re-run the 4-region seed-1 fit with the spatial coefficient path; if it
+  completes, run the same seed comparison against the unregioned and 2-region
+  baselines.
 - If 4 regions remain stable and affordable, move toward the longer-term
   8-10 region clustering target.
 

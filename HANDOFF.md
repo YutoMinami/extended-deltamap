@@ -126,6 +126,50 @@ Start with synchrotron-only, 2 fixed regions, beta_s only, first-order fit.
 - With `region_mask=None` the behaviour is identical to today (no-mask path).
 - Files: `extended_deltamap/dmatrix.py`.
 
+### Pre-Step-4 cleanup (complete before starting Step 4)
+
+Two issues found in review of Steps 1–3. Fix both before implementing Step 4.
+
+**Issue A — `_count_component_terms` can silently diverge from `_build_component_terms`**
+
+`dmatrix.py` has two parallel implementations that must stay in sync:
+- `_build_component_terms` — builds the actual symbolic terms
+- `_count_component_terms` — counts how many terms `_build_component_terms` would produce
+
+If one is updated without the other (e.g. a new derivative order rule is added), `column_masks`
+will be the wrong length and the `_set_matrix_from_template_terms` length check will catch it
+at runtime rather than at test time.
+
+Fix: replace `_count_component_terms` with a call to `_build_component_terms` and `len()`:
+```python
+def _count_component_terms(self, params, max_order=1, diff_param=None):
+    return len(self._build_component_terms(
+        sympy.Integer(1), params, max_order=max_order, diff_param=diff_param
+    ))
+```
+Using `sympy.Integer(1)` as a dummy function avoids symbolic computation overhead while
+keeping the branch logic identical. Update the existing smoke test
+`test_count_component_terms_matches_second_order_dust_columns` to confirm it still passes.
+
+**Issue B — `expand_to_qu` and `validate_region_masks` are stranded in a script**
+
+Both functions are defined only in `scripts/make_synch_brightness_regions.py`.
+Step 4 (`CalcH_matrix`) and Step 5 (param expansion) will need to call them from fitting code,
+but importing from `scripts/` is not a clean dependency.
+
+Fix:
+1. Move `expand_to_qu` and `validate_region_masks` into a new module
+   `extended_deltamap/regions.py`.
+2. In `scripts/make_synch_brightness_regions.py`, replace the local definitions with imports:
+   `from extended_deltamap.regions import expand_to_qu, validate_region_masks`
+3. Export both from `extended_deltamap/__init__.py` if they will be used by callers outside
+   the package (e.g. `TestDeltamap.py`).
+4. Add a minimal smoke test confirming the import works and `validate_region_masks` raises on
+   overlapping inputs.
+
+Do not move `split_by_median`, `read_synch_pol_brightness`, or `read_analysis_mask` — those
+are script-level I/O helpers that belong in `scripts/`.
+
 ### Step 4 — DeltaMap: mask-aware CalcH_matrix
 - `CalcH_matrix()` reads `self.dmtrx.column_masks` for each column pair `(i, j)`.
 - Replace `self.NI_list[k]` with a masked version:

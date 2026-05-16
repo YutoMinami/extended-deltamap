@@ -14,6 +14,15 @@
 - Check whether `nside=4` is simply too coarse to constrain the added
   second-order sky-side terms; low spatial information may be part of why the
   `order=2` likelihood becomes unstable even when the first-order model works.
+- Pre-Step-4 cleanup A: replace `_count_component_terms` in `dmatrix.py` with a
+  call to `_build_component_terms(sympy.Integer(1), ...)` and `len()` so the two
+  implementations cannot silently diverge. Update the corresponding smoke test to
+  confirm it still passes.
+- Pre-Step-4 cleanup B: move `expand_to_qu` and `validate_region_masks` from
+  `scripts/make_synch_brightness_regions.py` into `extended_deltamap/regions.py`;
+  update the script to import from there; export both from `__init__.py`; add a
+  smoke test confirming the import and that `validate_region_masks` raises on
+  overlapping inputs. Do not move the script-level I/O helpers.
 - Implement region-wise foreground-parameter prototype following the 5-step
   plan (see HANDOFF.md for detail). Start with synchrotron-only, 2 fixed
   regions, beta_s only, first-order Delta-map.

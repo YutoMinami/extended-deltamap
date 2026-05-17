@@ -8,6 +8,7 @@ import argparse
 import configparser
 import importlib.resources
 import sys
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -189,6 +190,33 @@ def write_fit_result_csv(
         writer.writerow(row)
 
 
+def run_likelihood_profile(dmp: DeltaMap, repeats: int) -> float:
+    """Time repeated likelihood evaluations for the current setup."""
+    if repeats < 1:
+        raise ValueError("profile_repeats must be at least 1")
+
+    d_shape = getattr(dmp.dmtrx, "D_matrix", numpy.empty((0, 0))).shape
+    spatial_builder = getattr(dmp.dmtrx, "spatial_coefficient_builder", None)
+    param_names = [param.name for param in dmp.params]
+
+    print(f"profile parameters: {param_names}")
+    print(f"profile D_matrix shape: {d_shape}")
+    print(f"profile spatial_coefficients active: {spatial_builder is not None}")
+
+    likelihood = numpy.nan
+    timings = []
+    for index in range(repeats):
+        start = time.perf_counter()
+        likelihood = float(dmp.ReturnLikelihood())
+        elapsed = time.perf_counter() - start
+        timings.append(elapsed)
+        print(f"profile likelihood_eval {index + 1}: {elapsed:.6f} s, value={likelihood:.8e}")
+
+    print(f"profile mean_eval_time: {numpy.mean(timings):.6f} s")
+    print(f"profile total_eval_time: {numpy.sum(timings):.6f} s")
+    return likelihood
+
+
 def resolve_path(base_dir: Path, path_text: str) -> str:
     """Resolve a config-relative path to an absolute string path.
 
@@ -284,29 +312,167 @@ def add_synch_components_to_dmatrix(
 
 def use_spatial_synch_region_coefficients(
     synch_region_masks: Sequence[numpy.ndarray] | None,
+    *,
     isdust: bool,
     issynch: bool,
     uni: bool,
     order: int,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
 ) -> bool:
-    """Return whether the fast spatial synchrotron region path should be used."""
-    if synch_region_masks is None or not issynch:
+    """Return whether the fast spatial region path should be used."""
+    has_region_masks = synch_region_masks is not None or dust_region_masks is not None
+    if not has_region_masks:
         return False
 
     unsupported = []
-    if isdust:
-        unsupported.append("isdust=True")
+    if isdust and dust_region_masks is None:
+        unsupported.append("missing dust_region_masks")
+    if not isdust and dust_region_masks is not None:
+        unsupported.append("dust_region_masks with isdust=False")
+    if issynch and synch_region_masks is None:
+        unsupported.append("missing synch_region_masks")
+    if not issynch and synch_region_masks is not None:
+        unsupported.append("synch_region_masks with issynch=False")
     if uni:
         unsupported.append("uni=True")
     if order != 1:
         unsupported.append(f"order={order}")
     if unsupported:
         raise ValueError(
-            "synch_region_masks currently require the spatial synchrotron-only "
-            "first-order path; unsupported settings: "
+            "region masks currently require the spatial first-order path with "
+            "masks for every enabled foreground component; unsupported settings: "
             + ", ".join(unsupported)
         )
     return True
+
+
+def add_spatial_region_components_to_dmatrix(
+    dmt: DMatrix,
+    templates: Templates,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+) -> None:
+    """Add dust and/or synchrotron terms using pixel-dependent coefficients."""
+    template_terms = []
+    coefficient_specs = []
+    nu_symbol = sympy.Symbol("nu")
+
+    if dust_region_masks is not None:
+        dust_terms = []
+        dust_beta_derivatives = []
+        dust_temp_derivatives = []
+        for index, region_mask in enumerate(dust_region_masks):
+            beta_symbol = sympy.Symbol(region_parameter_name("beta_d", "dreg", index))
+            temp_symbol = sympy.Symbol(region_parameter_name("T_d1", "dreg", index))
+            term = make_dust_temperature_template(
+                templates,
+                beta_symbol.name,
+                temp_symbol.name,
+            )
+            derivative_beta = sympy.diff(term, beta_symbol)
+            derivative_temp = sympy.diff(term, temp_symbol)
+            dust_terms.append(term)
+            dust_beta_derivatives.append(derivative_beta)
+            dust_temp_derivatives.append(derivative_temp)
+            coefficient_specs.append(
+                (
+                    numpy.asarray(region_mask, dtype=numpy.float64),
+                    [
+                        (
+                            0,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol, temp_symbol),
+                                term,
+                                "numpy",
+                            ),
+                        ),
+                        (
+                            1,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol, temp_symbol),
+                                derivative_beta,
+                                "numpy",
+                            ),
+                        ),
+                        (
+                            2,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol, temp_symbol),
+                                derivative_temp,
+                                "numpy",
+                            ),
+                        ),
+                    ],
+                    [beta_symbol.name, temp_symbol.name],
+                )
+            )
+        template_terms.extend(
+            [
+                sum(dust_terms),
+                sum(dust_beta_derivatives),
+                sum(dust_temp_derivatives),
+            ]
+        )
+
+    synch_column_offset = len(template_terms)
+    if synch_region_masks is not None:
+        synch_terms = []
+        synch_derivatives = []
+        for index, region_mask in enumerate(synch_region_masks):
+            beta_symbol = sympy.Symbol(region_parameter_name("beta_s", "sreg", index))
+            term = make_synch_template(templates, beta_symbol.name)
+            derivative = sympy.diff(term, beta_symbol)
+            synch_terms.append(term)
+            synch_derivatives.append(derivative)
+            coefficient_specs.append(
+                (
+                    numpy.asarray(region_mask, dtype=numpy.float64),
+                    [
+                        (
+                            synch_column_offset,
+                            sympy.lambdify((nu_symbol, beta_symbol), term, "numpy"),
+                        ),
+                        (
+                            synch_column_offset + 1,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol),
+                                derivative,
+                                "numpy",
+                            ),
+                        ),
+                    ],
+                    [beta_symbol.name],
+                )
+            )
+        template_terms.extend([sum(synch_terms), sum(synch_derivatives)])
+
+    if not template_terms:
+        raise ValueError("At least one region mask set is required")
+
+    def coefficient_builder(freqs, param_values, size):
+        coefficients = numpy.zeros(
+            (len(freqs), len(template_terms), size),
+            dtype=numpy.float64,
+        )
+        for region_mask, functions, parameter_names in coefficient_specs:
+            if region_mask.shape != (size,):
+                raise ValueError(
+                    "Region mask length must match DeltaMap size for spatial "
+                    f"coefficients: {region_mask.shape} != ({size},)"
+                )
+            parameter_values = [param_values[name] for name in parameter_names]
+            for freq_index, nu_value in enumerate(freqs):
+                for column_index, function in functions:
+                    coefficients[freq_index, column_index] += (
+                        float(function(float(nu_value), *parameter_values))
+                        * region_mask
+                    )
+        return coefficients
+
+    dmt.SetSpatialCoefficients(
+        [sympy.simplify(term) for term in template_terms],
+        coefficient_builder,
+    )
 
 
 def add_spatial_synch_components_to_dmatrix(
@@ -315,74 +481,25 @@ def add_spatial_synch_components_to_dmatrix(
     synch_region_masks: Sequence[numpy.ndarray],
 ) -> None:
     """Add synchrotron terms using pixel-dependent region coefficients."""
-    beta_symbols = [
-        sympy.Symbol(region_parameter_name("beta_s", "sreg", index))
-        for index in range(len(synch_region_masks))
-    ]
-    synch_terms = [
-        make_synch_template(templates, beta_symbol.name)
-        for beta_symbol in beta_symbols
-    ]
-    synch_derivatives = [
-        sympy.diff(term, beta_symbol)
-        for term, beta_symbol in zip(synch_terms, beta_symbols)
-    ]
-    template_terms = [
-        sympy.simplify(sum(synch_terms)),
-        sympy.simplify(sum(synch_derivatives)),
-    ]
-    nu_symbol = sympy.Symbol("nu")
-    synch_funcs = [
-        sympy.lambdify((nu_symbol, beta_symbol), term, "numpy")
-        for term, beta_symbol in zip(synch_terms, beta_symbols)
-    ]
-    derivative_funcs = [
-        sympy.lambdify((nu_symbol, beta_symbol), derivative, "numpy")
-        for derivative, beta_symbol in zip(synch_derivatives, beta_symbols)
-    ]
-    region_masks = [
-        numpy.asarray(region_mask, dtype=numpy.float64)
-        for region_mask in synch_region_masks
-    ]
-
-    def coefficient_builder(freqs, param_values, size):
-        coefficients = numpy.zeros((len(freqs), 2, size), dtype=numpy.float64)
-        for region_mask in region_masks:
-            if region_mask.shape != (size,):
-                raise ValueError(
-                    "Region mask length must match DeltaMap size for spatial "
-                    f"coefficients: {region_mask.shape} != ({size},)"
-                )
-        for freq_index, nu_value in enumerate(freqs):
-            for region_mask, term, derivative, beta_symbol in zip(
-                region_masks,
-                synch_funcs,
-                derivative_funcs,
-                beta_symbols,
-            ):
-                beta_value = param_values[beta_symbol.name]
-                coefficients[freq_index, 0] += (
-                    float(term(float(nu_value), beta_value)) * region_mask
-                )
-                coefficients[freq_index, 1] += (
-                    float(derivative(float(nu_value), beta_value)) * region_mask
-                )
-        return coefficients
-
-    dmt.SetSpatialCoefficients(template_terms, coefficient_builder)
+    add_spatial_region_components_to_dmatrix(
+        dmt,
+        templates,
+        synch_region_masks=synch_region_masks,
+    )
 
 
-def load_synch_region_masks(
+def load_region_masks(
     fit_parser: configparser.ConfigParser,
     fitconfig_dir: Path,
     maskname: str,
     nside: int,
+    region_key: str,
 ) -> list[numpy.ndarray] | None:
-    """Load optional Q/U-expanded synchrotron region masks from config."""
+    """Load optional Q/U-expanded region masks from config."""
     mask_setting = get_optional_config_value(
         fit_parser,
-        ("regions", "synch_region_masks"),
-        ("par", "synch_region_masks"),
+        ("regions", region_key),
+        ("par", region_key),
     )
     if mask_setting is None:
         return None
@@ -407,6 +524,38 @@ def load_synch_region_masks(
     )
     validate_region_masks(region_masks, observed_analysis_mask)
     return region_masks
+
+
+def load_synch_region_masks(
+    fit_parser: configparser.ConfigParser,
+    fitconfig_dir: Path,
+    maskname: str,
+    nside: int,
+) -> list[numpy.ndarray] | None:
+    """Load optional synchrotron region masks from config."""
+    return load_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+        "synch_region_masks",
+    )
+
+
+def load_dust_region_masks(
+    fit_parser: configparser.ConfigParser,
+    fitconfig_dir: Path,
+    maskname: str,
+    nside: int,
+) -> list[numpy.ndarray] | None:
+    """Load optional dust region masks from config."""
+    return load_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+        "dust_region_masks",
+    )
 
 
 def validate_region_mask_nside(
@@ -849,6 +998,9 @@ def test_fg_with_noise_cov(
     input_dir: str | None = None,
     synch_region_masks: Sequence[numpy.ndarray] | None = None,
     beta_s_region_inits: Sequence[float] | None = None,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_d_region_inits: Sequence[float] | None = None,
+    T_d1_region_inits: Sequence[float] | None = None,
 ) -> DeltaMap:
     """Prepare a DeltaMap fit using the standard dust-temperature parameterization.
 
@@ -936,10 +1088,11 @@ def test_fg_with_noise_cov(
         issynch=issynch,
         uni=uni,
         order=order,
+        dust_region_masks=dust_region_masks,
     )
 
     dmt = DMatrix()
-    if isdust:
+    if isdust and not use_spatial_synch_regions:
         dmt.AddD(mbb1)
     if issynch and not use_spatial_synch_regions:
         add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
@@ -947,7 +1100,12 @@ def test_fg_with_noise_cov(
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
     if use_spatial_synch_regions:
-        add_spatial_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
+        add_spatial_region_components_to_dmatrix(
+            dmt,
+            tmpl,
+            dust_region_masks=dust_region_masks,
+            synch_region_masks=synch_region_masks,
+        )
     elif uni:
         dmt.PrepareUniformDMatrix()
     else:
@@ -1009,6 +1167,23 @@ def test_fg_with_noise_cov(
             len(synch_region_masks),
             beta_s_region_inits,
         )
+    if dust_region_masks is not None:
+        if "beta_d" in initial_params:
+            expand_region_parameter_inits(
+                initial_params,
+                "beta_d",
+                "dreg",
+                len(dust_region_masks),
+                beta_d_region_inits,
+            )
+        if "T_d1" in initial_params:
+            expand_region_parameter_inits(
+                initial_params,
+                "T_d1",
+                "dreg",
+                len(dust_region_masks),
+                T_d1_region_inits,
+            )
     dmp.SetParameterInitial(initial_params)
     return dmp
 
@@ -1045,6 +1220,9 @@ def test_fg_with_noise_cov_xref(
     input_dir: str | None = None,
     synch_region_masks: Sequence[numpy.ndarray] | None = None,
     beta_s_region_inits: Sequence[float] | None = None,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_d_region_inits: Sequence[float] | None = None,
+    T_d1_region_inits: Sequence[float] | None = None,
 ) -> DeltaMap:
     """Prepare a DeltaMap fit using the ``x^R`` dust parameterization.
 
@@ -1133,10 +1311,11 @@ def test_fg_with_noise_cov_xref(
         issynch=issynch,
         uni=uni,
         order=order,
+        dust_region_masks=dust_region_masks,
     )
 
     dmt = DMatrix()
-    if isdust:
+    if isdust and not use_spatial_synch_regions:
         dmt.AddD(mbb1)
     if issynch and not use_spatial_synch_regions:
         add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
@@ -1144,7 +1323,12 @@ def test_fg_with_noise_cov_xref(
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
     if use_spatial_synch_regions:
-        add_spatial_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
+        add_spatial_region_components_to_dmatrix(
+            dmt,
+            tmpl,
+            dust_region_masks=dust_region_masks,
+            synch_region_masks=synch_region_masks,
+        )
     elif uni:
         dmt.PrepareUniformDMatrix()
     else:
@@ -1205,6 +1389,19 @@ def test_fg_with_noise_cov_xref(
             len(synch_region_masks),
             beta_s_region_inits,
         )
+    if dust_region_masks is not None:
+        if "beta_d" in initial_params:
+            expand_region_parameter_inits(
+                initial_params,
+                "beta_d",
+                "dreg",
+                len(dust_region_masks),
+                beta_d_region_inits,
+            )
+        if "x^R" in initial_params:
+            raise ValueError("dust_region_masks are not yet supported for x^R dust fits")
+        if T_d1_region_inits is not None:
+            raise ValueError("T_d1_region_inits cannot be used with x^R dust fits")
     dmp.SetParameterInitial(initial_params)
     return dmp
 
@@ -1316,10 +1513,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         maskname,
         nside,
     )
+    dust_region_masks = load_dust_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+    )
     beta_s_region_inits = parse_optional_float_list(
         fit_parser,
         ("regions", "beta_s_region_inits"),
         ("par", "beta_s_region_inits"),
+    )
+    beta_d_region_inits = parse_optional_float_list(
+        fit_parser,
+        ("regions", "beta_d_region_inits"),
+        ("par", "beta_d_region_inits"),
+    )
+    T_d1_region_inits = parse_optional_float_list(
+        fit_parser,
+        ("regions", "T_d1_region_inits"),
+        ("par", "T_d1_region_inits"),
     )
 
     dmp = None
@@ -1351,6 +1564,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_dir=input_dir,
             synch_region_masks=synch_region_masks,
             beta_s_region_inits=beta_s_region_inits,
+            dust_region_masks=dust_region_masks,
+            beta_d_region_inits=beta_d_region_inits,
+            T_d1_region_inits=T_d1_region_inits,
         )
     else:
         dmp = test_fg_with_noise_cov_xref(
@@ -1379,6 +1595,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_dir=input_dir,
             synch_region_masks=synch_region_masks,
             beta_s_region_inits=beta_s_region_inits,
+            dust_region_masks=dust_region_masks,
+            beta_d_region_inits=beta_d_region_inits,
+            T_d1_region_inits=T_d1_region_inits,
         )
 
     dmp.SetParameters(values=params)
@@ -1426,6 +1645,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("xR +/- = {0:.2f} +/- {1:.2f}".format(xr_mean, xr_std))
         dmp.SetxRPrior(xr_mean, xr_std * xr_sigma)
 
+    profile_only = False
+    try:
+        profile_only = get_bool_value(fit_parser, ("diagnostics", "profile_only"), ("par", "profile_only"))
+    except (configparser.NoOptionError, ValueError):
+        pass
+    profile_repeats = 3
+    try:
+        profile_repeats = get_int_value(
+            fit_parser,
+            ("diagnostics", "profile_repeats"),
+            ("par", "profile_repeats"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+    if profile_only:
+        dmp.lh = run_likelihood_profile(dmp, profile_repeats)
+        dmp.param_errors = {key: numpy.nan for key in dmp.param_values.keys()}
+        write_fit_result_csv(
+            oname,
+            seed=args.seed,
+            likelihood=dmp.lh,
+            param_values=dmp.param_values,
+            param_errors=dmp.param_errors,
+        )
+        return 0
+
     with_migrad = True
     try:
         with_migrad = get_bool_value(fit_parser, ("fit", "migrad"), ("par", "migrad"))
@@ -1434,6 +1679,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     dmp.migrad = with_migrad
     dmp.r_verbose = False
+    try:
+        dmp.migrad_ncall = get_int_value(
+            fit_parser,
+            ("diagnostics", "migrad_ncall"),
+            ("fit", "migrad_ncall"),
+            ("par", "migrad_ncall"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+    try:
+        dmp.minuit_trace = get_bool_value(
+            fit_parser,
+            ("diagnostics", "minuit_trace"),
+            ("fit", "minuit_trace"),
+            ("par", "minuit_trace"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
 
     simul = False
     try:

@@ -83,6 +83,8 @@ class DeltaMap:
         self.is_noise_set = False
         self.inds_cache = {}
         self.migrad = True
+        self.migrad_ncall = None
+        self.minuit_trace = False
         self.r_verbose = False
 
     def _is_r_parameter(self, param):
@@ -1499,8 +1501,13 @@ class DeltaMap:
             self.m.strategy = 2
 
         if not isfit_r:
-            self.m.migrad()
+            self.m.migrad(ncall=self.migrad_ncall)
             fmin = self.m.fmin
+            if self.minuit_trace:
+                print(
+                    "minuit step isfit_r=False isonly_r=False "
+                    f"nfcn={fmin.nfcn} valid={self.m.valid} fval={fmin.fval:.8e}"
+                )
             fparam = []
             # for value,error in zip(self.m.values, self.m.errors):
             for p in self.m.params:
@@ -1516,8 +1523,13 @@ class DeltaMap:
             if isfit_r and not self.migrad:
                 self.m.scipy()
             else:
-                self.m.migrad()
+                self.m.migrad(ncall=self.migrad_ncall)
             fmin = self.m.fmin
+            if self.minuit_trace:
+                print(
+                    f"minuit step isfit_r={isfit_r} isonly_r={isonly_r} "
+                    f"nfcn={fmin.nfcn} valid={self.m.valid} fval={fmin.fval:.8e}"
+                )
             if self.r_verbose:
                 print(self.m.params[0].value, self.m.fmin.fval)
             self.r_valid = self.m.valid

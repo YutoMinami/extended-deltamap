@@ -366,6 +366,70 @@ class SmokeTests(unittest.TestCase):
         )
         self.assertFalse(np.allclose(coefficients[0, 1, mask0], coefficients[0, 1, mask1]))
 
+    def test_spatial_dust_region_setup_uses_three_columns(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        mask0 = np.array([True, False, True, False])
+        mask1 = np.array([False, True, False, True])
+        dmatrix.SetFreqs([235.0], [None])
+
+        example_testdeltamap.add_spatial_region_components_to_dmatrix(
+            dmatrix,
+            templates,
+            dust_region_masks=[mask0, mask1],
+        )
+
+        coefficients = dmatrix.spatial_coefficient_builder(
+            dmatrix.freqs,
+            {
+                "beta_d_dreg0": 1.5,
+                "T_d1_dreg0": 20.0,
+                "beta_d_dreg1": 1.7,
+                "T_d1_dreg1": 21.0,
+            },
+            len(mask0),
+        )
+
+        self.assertEqual(dmatrix.D_matrix.shape, (1, 3))
+        self.assertIn(sympy.Symbol("beta_d_dreg0"), dmatrix.D_matrix.free_symbols)
+        self.assertIn(sympy.Symbol("T_d1_dreg1"), dmatrix.D_matrix.free_symbols)
+        self.assertEqual(coefficients.shape, (1, 3, 4))
+        self.assertTrue(np.all(np.isfinite(coefficients)))
+        self.assertFalse(np.allclose(coefficients[0, 0, mask0], coefficients[0, 0, mask1]))
+
+    def test_spatial_dust_and_synch_region_setup_uses_five_columns(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        dust_mask0 = np.array([True, False, True, False])
+        dust_mask1 = np.array([False, True, False, True])
+        synch_mask0 = np.array([True, True, False, False])
+        synch_mask1 = np.array([False, False, True, True])
+        dmatrix.SetFreqs([140.0], [None])
+
+        example_testdeltamap.add_spatial_region_components_to_dmatrix(
+            dmatrix,
+            templates,
+            dust_region_masks=[dust_mask0, dust_mask1],
+            synch_region_masks=[synch_mask0, synch_mask1],
+        )
+
+        coefficients = dmatrix.spatial_coefficient_builder(
+            dmatrix.freqs,
+            {
+                "beta_d_dreg0": 1.5,
+                "T_d1_dreg0": 20.0,
+                "beta_d_dreg1": 1.7,
+                "T_d1_dreg1": 21.0,
+                "beta_s_sreg0": -3.0,
+                "beta_s_sreg1": -3.3,
+            },
+            len(dust_mask0),
+        )
+
+        self.assertEqual(dmatrix.D_matrix.shape, (1, 5))
+        self.assertEqual(coefficients.shape, (1, 5, 4))
+        self.assertTrue(np.all(np.isfinite(coefficients)))
+
     def test_spatial_synch_region_guard_rejects_unsupported_fallbacks(self) -> None:
         masks = [np.array([True, False]), np.array([False, True])]
 
@@ -378,7 +442,7 @@ class SmokeTests(unittest.TestCase):
                 order=1,
             )
         )
-        with self.assertRaisesRegex(ValueError, "isdust=True"):
+        with self.assertRaisesRegex(ValueError, "missing dust_region_masks"):
             example_testdeltamap.use_spatial_synch_region_coefficients(
                 masks,
                 isdust=True,

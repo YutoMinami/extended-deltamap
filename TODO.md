@@ -21,7 +21,12 @@
     Dust template has 2 SED parameters (beta_d, T_d1), so template_terms will
     have 3 columns (0th order + 2 derivatives). Region masks derived from
     353 GHz dust-dominated maps, independent of synchrotron masks.
-    Validates r recovery with both synchrotron and dust region-wise.
+    Dust-only seed-1 fit completes locally with `D_matrix.shape == (7, 3)`.
+    Combined dust+synch setup uses `D_matrix.shape == (9, 5)`, but the full
+    fit is optimizer-limited: profiling shows each likelihood evaluation is
+    modest while Minuit uses many evaluations in the 7-parameter problem.
+    Next: decide whether to add staged fitting / stronger initialization before
+    using combined dust+synch for multi-seed recovery checks.
   Step B — Move to nside=8 with 2 regions each for synchrotron and dust.
     nside=8 gives ~4x more pixels (~428 valid), providing enough per-region
     statistics to support more regions. Confirms the method scales with Nside.

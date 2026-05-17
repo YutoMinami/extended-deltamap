@@ -285,6 +285,33 @@ Remaining immediate work:
     Synchrotron regions from low-frequency maps; dust regions from 353 GHz.
     Final region counts and shapes kept independent between components.
 
+Step A implementation status:
+- Dust spatial coefficients are implemented for `beta_d_dreg{i}` and
+  `T_d1_dreg{i}`. Dust-only region-wise setup keeps the D basis at 3 columns
+  regardless of the 2 dust regions; dust+synch keeps the D basis at 5 columns.
+- Local dust masks were generated from the available 337 GHz dust-dominated
+  proxy map with:
+  `uv run python scripts/make_synch_brightness_regions.py examples/output_pysm3_ns4/test01_nu0337p00GHz_d1_nside0004.fits examples/files/mask_p06_Nside4.v2.fits --output-dir data/regions --prefix dust337_median_ns4 --nside 4 --region-count 2`
+  The split produced 107 valid pixels, with 53 faint and 54 bright pixels.
+- Added configs:
+  `examples/Dust_var_7freq_regionwise2_r1e-2.ini`,
+  `examples/DustSynch_var_9freq_regionwise2_r1e-2.ini`,
+  plus `*_profile.ini` and `*_trace_ncall20.ini` diagnostics.
+- Dust-only seed-1 completed:
+  `examples/test_results/Dust_var_7freq_regionwise2_r1e-2/num0001.csv`.
+  The CSV contains region parameters `beta_d_dreg0/1` and `T_d1_dreg0/1`;
+  seed-1 gave `r = 0.02642685318736789`.
+- The combined dust+synch full fit was stopped after running for a long time.
+  It was CPU-bound, not blocked on mask I/O. Diagnostics show the matrix size
+  is controlled (`D_matrix.shape == (9, 5)`), but the 7-parameter Minuit search
+  is expensive. Profile timings:
+  dust-only `(7, 3)` mean likelihood evaluation time ~0.077 s;
+  dust+synch `(9, 5)` mean likelihood evaluation time ~0.186 s.
+  With `migrad_ncall = 20`, dust-only used 36+22 evaluations per outer
+  iteration, while dust+synch used 57+27 evaluations per outer iteration and
+  remained invalid at that low cap. This points to optimizer/search cost and
+  parameter degeneracy, not region mask construction, as the immediate issue.
+
 Review follow-ups completed after the spatial coefficient implementation:
 - The old `add_synch_components_to_dmatrix(..., synch_region_masks=...)`
   column-mask helper now raises if region masks are passed. Normal region-wise

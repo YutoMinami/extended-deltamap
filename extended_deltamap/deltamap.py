@@ -82,6 +82,7 @@ class DeltaMap:
         self.is_noise_matrix = False
         self.is_noise_set = False
         self.inds_cache = {}
+        self._NI_stack = None
         self.migrad = True
         self.migrad_ncall = None
         self.minuit_trace = False
@@ -219,6 +220,7 @@ class DeltaMap:
             for i in self.N_inv_array:
                 # self.NI_list.append(i * sympy.eye(self.size) )
                 self.NI_list.append(i * numpy.identity(self.size))
+        self._NI_stack = numpy.stack(self.NI_list)
 
     # def SetParameterInitial(self, names, inits, limits=None):
     def SetParameterInitial(self, inits):
@@ -555,7 +557,11 @@ class DeltaMap:
             matrix_list.append(i_list)
         self.DTNIDc = numpy.block(matrix_list)
 
-        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve((self.AL, True), self.DTNIDc.T)
+        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve(
+            (self.AL, True),
+            self.DTNIDc.T,
+            check_finite=False,
+        )
         self.DT_SpNI_DL = self.stable_cholesky(DT_SpNI_D, lower=True)
 
         # def CalcDTNIM(self):
@@ -598,46 +604,87 @@ class DeltaMap:
 
     def _calc_h_matrix_from_spatial_coefficients(self, coefficients):
         """Build H-matrix terms from pixel-dependent D coefficients."""
+        timings = []
+
+        def record_timing(name, start):
+            timings.append((name, time.perf_counter() - start))
+
         n_columns = coefficients.shape[1]
-        matrix_list = []
-        for i in range(n_columns):
-            i_list = []
-            for j in range(n_columns):
-                element = numpy.zeros_like(self.NI_list[0])
-                for k, ni_k in enumerate(self.NI_list):
-                    element += (
-                        coefficients[k, i][:, None]
-                        * ni_k
-                        * coefficients[k, j][None, :]
-                    )
-                i_list.append(element)
-            matrix_list.append(i_list)
+        size = coefficients.shape[2]
+        NI_stack = self._NI_stack
+        if NI_stack is None:
+            start = time.perf_counter()
+            NI_stack = numpy.stack(self.NI_list)
+            self._NI_stack = NI_stack
+            record_timing("stack_NI_list", start)
 
-        DTNID = numpy.block(matrix_list)
+        start = time.perf_counter()
+        DTNID_blocks = numpy.empty(
+            (n_columns, n_columns, size, size),
+            dtype=numpy.float64,
+        )
+        for i in range(n_columns):
+            weighted_noise = coefficients[:, i, :, None] * NI_stack
+            DTNID_blocks[i] = numpy.einsum(
+                "kpq,kjq->jpq",
+                weighted_noise,
+                coefficients,
+                optimize=True,
+            )
+        record_timing("build_DTNID_blocks", start)
+
+        start = time.perf_counter()
+        DTNID = DTNID_blocks.transpose(0, 2, 1, 3).reshape(
+            n_columns * size,
+            n_columns * size,
+        )
+        record_timing("reshape_DTNID", start)
+
+        start = time.perf_counter()
         self.DNIDL = self.stable_cholesky(DTNID, lower=True)
+        record_timing("cholesky_DTNID", start)
 
-        matrix_list = []
-        for i in range(n_columns):
-            i_list = []
-            element = numpy.zeros_like(self.NI_list[0])
-            for k, ni_k in enumerate(self.NI_list):
-                element += coefficients[k, i][:, None] * ni_k
-            i_list.append(element)
-            matrix_list.append(i_list)
-        self.DTNIDc = numpy.block(matrix_list)
+        start = time.perf_counter()
+        DTNIDc_blocks = numpy.einsum(
+            "kip,kpq->ipq",
+            coefficients,
+            NI_stack,
+            optimize=True,
+        )
+        self.DTNIDc = DTNIDc_blocks.reshape(n_columns * size, size)
+        record_timing("build_DTNIDc", start)
 
-        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve((self.AL, True), self.DTNIDc.T)
+        start = time.perf_counter()
+        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve(
+            (self.AL, True),
+            self.DTNIDc.T,
+            check_finite=False,
+        )
+        record_timing("build_DT_SpNI_D", start)
+
+        start = time.perf_counter()
         self.DT_SpNI_DL = self.stable_cholesky(DT_SpNI_D, lower=True)
+        record_timing("cholesky_DT_SpNI_D", start)
 
-        matrix_list = []
-        for i in range(n_columns):
-            i_list = []
-            element = numpy.zeros_like(self.meanvec[0])
-            for k, ni_k in enumerate(self.NI_list):
-                element += coefficients[k, i][:, None] * (ni_k @ self.meanvec[k])
-            i_list.append(element)
-            matrix_list.append(i_list)
-        self.DTNIM = numpy.block(matrix_list)
+        start = time.perf_counter()
+        meanvec_stack = numpy.stack([m.ravel() for m in self.meanvec])
+        NIM_stack = numpy.einsum(
+            "kpq,kq->kp",
+            NI_stack,
+            meanvec_stack,
+            optimize=True,
+        )
+        DTNIM_flat = numpy.einsum(
+            "kip,kp->ip",
+            coefficients,
+            NIM_stack,
+            optimize=True,
+        )
+        self.DTNIM = DTNIM_flat.reshape(n_columns * size, 1)
+        record_timing("build_DTNIM", start)
+        if self.internal_timing:
+            timing_text = ", ".join(f"{name}={elapsed:.6f}s" for name, elapsed in timings)
+            print(f"timing spatial CalcH_matrix detail: {timing_text}")
 
     def _column_masks(self, n_columns):
         """Return D-matrix column masks, defaulting to the unmasked path."""
@@ -674,7 +721,11 @@ class DeltaMap:
 
     def CalcDTNID_I_DTNIM(self):
         """Solve the projected normal equations for the mean-vector term."""
-        self.DTNID_I_DTNIM = scipy.linalg.cho_solve((self.DNIDL, True), self.DTNIM)
+        self.DTNID_I_DTNIM = scipy.linalg.cho_solve(
+            (self.DNIDL, True),
+            self.DTNIM,
+            check_finite=False,
+        )
 
     def CalcDcTNID_DTNID_I_DTNIM(self):
         """Project the solved mean-vector term back to pixel space."""
@@ -682,11 +733,19 @@ class DeltaMap:
 
     def CalcBIDcTNID_DTNID_I_DTNIM(self):
         """Apply the inverse ``B`` operator to the projected mean-vector term."""
-        self.BIDcTNID_DTNID_I_DTNIM = scipy.linalg.cho_solve((self.BL, True), self.DcTNID_DTNID_I_DTNIM)
+        self.BIDcTNID_DTNID_I_DTNIM = scipy.linalg.cho_solve(
+            (self.BL, True),
+            self.DcTNID_DTNID_I_DTNIM,
+            check_finite=False,
+        )
 
     def CalcDelta(self):
         """Compute the scalar or matrix-valued ``Delta`` term from projected noise blocks."""
-        self.Delta = self.DTNIDc.T @ scipy.linalg.cho_solve((self.DNIDL, True), self.DTNIDc)
+        self.Delta = self.DTNIDc.T @ scipy.linalg.cho_solve(
+            (self.DNIDL, True),
+            self.DTNIDc,
+            check_finite=False,
+        )
 
     def CalcH(self):
         """Construct the H operator for the diagonal-noise approximation."""
@@ -1780,10 +1839,15 @@ class DeltaMap:
         for _ in range(max_tries):
             try:
                 if jitter == 0.0:
-                    return scipy.linalg.cholesky(sym_matrix, lower=lower)
+                    return scipy.linalg.cholesky(
+                        sym_matrix,
+                        lower=lower,
+                        check_finite=False,
+                    )
                 return scipy.linalg.cholesky(
                     sym_matrix + numpy.eye(sym_matrix.shape[0]) * jitter,
                     lower=lower,
+                    check_finite=False,
                 )
             except numpy.linalg.LinAlgError:
                 jitter = initial_jitter * diag_scale if jitter == 0.0 else jitter * 10.0

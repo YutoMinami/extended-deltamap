@@ -37,9 +37,12 @@
     Combined dust+synch profile keeps `D_matrix.shape == (9, 5)`, but one
     likelihood evaluation initially took ~4.56 s. Replacing the `DNIDL`
     logdet with the Cholesky diagonal formula reduced `ReturnlnDNID` from
-    ~0.97 s to ~0.0001 s and total evaluation time to ~3.49 s. Do not launch
-    multi-seed full fits until `CalcH_matrix()` / `CalcDelta()` are optimized
-    further or a cheaper staged test is chosen.
+    ~0.97 s to ~0.0001 s and total evaluation time to ~3.49 s. An einsum
+    rewrite of the spatial `CalcH_matrix()` reduced Python-loop overhead, but
+    the remaining time is dominated by dense Cholesky and `DTNIDc A^{-1}
+    DTNIDc^T`; with finite checks disabled on the largest solves, the profile
+    is ~3.37 s/eval. Do not launch multi-seed full fits until either this
+    dense linear algebra cost is acceptable or a cheaper staged test is chosen.
   Step C — k-means clustering with ~5 regions each for synchrotron and dust
     at nside=8. Synchrotron regions from low-frequency polarization maps;
     dust regions from 353 GHz dust-dominated maps. Final region counts and

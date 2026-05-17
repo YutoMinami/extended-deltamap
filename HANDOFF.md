@@ -308,9 +308,169 @@ Step B nside=8 setup status:
   `ReturnlnDNID()` was optimized to use the Cholesky diagonal identity
   `log det(L L^T) = 2 sum(log(diag(L)))`, reducing that term to ~0.0001 s and
   total evaluation time to ~3.49 s on seed 3. A full Minuit run is still likely
-  long; next engineering target is `CalcH_matrix()` / `CalcDelta()` caching or
-  block optimization, or defining a cheaper staged convergence test before
-  multi-seed full fits.
+  long; next engineering target is `CalcH_matrix()` through the einsum
+  refactor described below.
+
+### CalcH_matrix einsum optimization (next Codex task)
+
+Target: `extended_deltamap/deltamap.py`, method
+`_calc_h_matrix_from_spatial_coefficients`. The current triple Python loop
+(n_columns × n_columns × n_freqs = 225 iterations for nside=8 with 5 columns
+and 9 frequencies) is the dominant cost at ~2.57 s per evaluation. NI is
+block-diagonal across frequencies (no cross-frequency coupling), but each
+per-frequency NI_k is a dense `(size × size)` matrix — so we cannot treat
+pixels as independent scalars.
+
+**Step 1 — Precompute `_NI_stack` once before the Minuit loop.**
+
+In `DeltaMap.__init__`, add:
+```python
+self._NI_stack = None
+```
+At the END of `CalcNInvArray()`, after the loop that fills `self.NI_list`:
+```python
+self._NI_stack = numpy.stack(self.NI_list)
+```
+Shape: `(n_freqs, size, size)`, where `size` is the internal Q/U-expanded
+vector length, not the number of valid sky pixels. For nside=8 there are
+428 valid sky pixels, so `size = 2 * 428 = 856`; `_NI_stack` has shape
+`(9, 856, 856)` and uses ≈ 53 MB in float64. This stack is computed once per
+fit; `NI_list` does not change during Minuit.
+
+**Step 2 — Replace DTNID triple loop with an einsum loop over i.**
+
+Replace the current:
+```python
+matrix_list = []
+for i in range(n_columns):
+    i_list = []
+    for j in range(n_columns):
+        element = numpy.zeros_like(self.NI_list[0])
+        for k, ni_k in enumerate(self.NI_list):
+            element += (
+                coefficients[k, i][:, None]
+                * ni_k
+                * coefficients[k, j][None, :]
+            )
+        i_list.append(element)
+    matrix_list.append(i_list)
+DTNID = numpy.block(matrix_list)
+```
+with:
+```python
+NI_stack = self._NI_stack  # (n_freqs, size, size)
+n_columns = coefficients.shape[1]
+size = coefficients.shape[2]
+
+DTNID_blocks = numpy.empty((n_columns, n_columns, size, size))
+for i in range(n_columns):
+    # T_i[k,p,q] = c[k,i,p] * NI_k[p,q]: shape (n_freqs, size, size)
+    T_i = coefficients[:, i, :, None] * NI_stack
+    # sum over k: DTNID_blocks[i,j,p,q] = sum_k T_i[k,p,q] * c[k,j,q]
+    DTNID_blocks[i] = numpy.einsum('kpq,kjq->jpq', T_i, coefficients)
+
+# Block-matrix reshape: (i,j,p,q) -> (i*size, j*size)
+# transpose(0,2,1,3) gives (i,p,j,q); reshape gives row i*size+p, col j*size+q
+DTNID = DTNID_blocks.transpose(0, 2, 1, 3).reshape(n_columns * size, n_columns * size)
+```
+This replaces 225 Python iterations with 5 iterations, each calling one
+vectorized einsum. Peak intermediate memory per iteration is ~53 MB at
+nside=8, the same shape as `_NI_stack`. `DTNID_blocks` itself has shape
+`(5, 5, 856, 856)` for the 9-band, 5-column nside=8 profile, about 146 MB;
+the final `DTNID` has shape `(4280, 4280)`, also about 146 MB. This is still
+acceptable at nside=8 but should be revisited before increasing nside.
+
+**Step 3 — Replace DTNIDc loop with a single einsum.**
+
+Replace the current:
+```python
+matrix_list = []
+for i in range(n_columns):
+    i_list = []
+    element = numpy.zeros_like(self.NI_list[0])
+    for k, ni_k in enumerate(self.NI_list):
+        element += coefficients[k, i][:, None] * ni_k
+    i_list.append(element)
+    matrix_list.append(i_list)
+self.DTNIDc = numpy.block(matrix_list)
+```
+with:
+```python
+# DTNIDc_blocks[i,p,q] = sum_k c[k,i,p] * NI_k[p,q]
+# p appears in BOTH tensors and in the output: it is NOT summed, only k is.
+DTNIDc_blocks = numpy.einsum('kip,kpq->ipq', coefficients, NI_stack)
+self.DTNIDc = DTNIDc_blocks.reshape(n_columns * size, size)
+```
+`reshape(n_columns * size, size)` stacks the n_columns blocks of `(size, size)`
+vertically, which is identical to the `numpy.block([[e_0], ..., [e_{n-1}]])`.
+
+**Step 4 — Replace DTNIM loop with two einsums.**
+
+Replace the current:
+```python
+matrix_list = []
+for i in range(n_columns):
+    i_list = []
+    element = numpy.zeros_like(self.meanvec[0])
+    for k, ni_k in enumerate(self.NI_list):
+        element += coefficients[k, i][:, None] * (ni_k @ self.meanvec[k])
+    i_list.append(element)
+    matrix_list.append(i_list)
+self.DTNIM = numpy.block(matrix_list)
+```
+with:
+```python
+# meanvec[k] has shape (size, 1); ravel to (size,) for einsum
+meanvec_stack = numpy.stack([m.ravel() for m in self.meanvec])  # (n_freqs, size)
+# NIM[k,p] = sum_q NI_k[p,q] * meanvec[k,q]
+NIM_stack = numpy.einsum('kpq,kq->kp', NI_stack, meanvec_stack)
+# DTNIM[i,p] = sum_k c[k,i,p] * NIM[k,p]
+DTNIM_flat = numpy.einsum('kip,kp->ip', coefficients, NIM_stack)
+self.DTNIM = DTNIM_flat.reshape(n_columns * size, 1)
+```
+
+**Correctness notes:**
+
+- The `transpose(0,2,1,3).reshape` for DTNID produces the same block layout as
+  `numpy.block(matrix_list)`: element `[i*size+p, j*size+q]` equals
+  `DTNID_blocks[i,j,p,q]`. Verify by checking `numpy.allclose(DTNID, DTNID.T)`.
+- `DTNIDc.reshape(n_columns * size, size)` is a vertical stack of n_columns
+  blocks of shape `(size, size)`. This matches `numpy.block([[e_0], ..., [e_{n-1}]])`.
+- `DTNIM.reshape(n_columns * size, 1)` matches the current `numpy.block` output.
+- `_NI_stack` must already be populated before
+  `_calc_h_matrix_from_spatial_coefficients` is called. Confirm that
+  `CalcNInvArray()` is always called before `CalcH_matrix()` in the fit flow.
+
+**Test plan after the change:**
+
+1. `uv run python -m unittest tests.test_smoke -v` — all 31 tests pass after
+   the einsum rewrite.
+2. Re-run the nside=8 profile config to confirm `CalcH_matrix()` timing. The
+   einsum rewrite reduced block-construction overhead (`build_DTNID_blocks`
+   is ~0.17 s), but total `CalcH_matrix()` remains ~2.45 s because the
+   dominant pieces are dense linear algebra:
+   `cholesky_DTNID` ~0.73 s, `build_DT_SpNI_D` ~0.71 s, and
+   `cholesky_DT_SpNI_D` ~0.67 s. Disabling finite checks on the largest
+   Cholesky/solve calls brought the full nside=8 profile to ~3.37 s/eval.
+   This means the Python-loop overhead was not the main bottleneck; dense
+   Cholesky and `DTNIDc A^{-1} DTNIDc^T` now dominate.
+3. Spot-check the seed-1 fit result for `DustSynch_var_9freq_regionwise2_ns8_r1e-2`
+   stays numerically close to prior runs (r ≈ 0.026 for dust-only at nside=4
+   was the reference; nside=8 results are expected to differ, but the optimizer
+   should converge rather than diverge).
+
+**CalcDelta note (secondary target):**
+
+`CalcDelta()` at ~0.63 s is:
+```python
+self.Delta = self.DTNIDc.T @ scipy.linalg.cho_solve((self.DNIDL, True), self.DTNIDc)
+```
+`DTNIDc` is `(n_cols*size, size)` = `(4280, 856)` and DNIDL is `(4280, 4280)`
+for nside=8 dust+synch with 5 D columns.
+The `cho_solve` is already dispatched to optimized LAPACK. There is no easy
+structural optimization here without rethinking the algorithm. Do not touch
+`CalcDelta` in this pass; revisit only if CalcH_matrix improvement is confirmed
+and total time is still too slow for multi-seed fits.
 
 Step A implementation status:
 - Dust spatial coefficients are implemented for `beta_d_dreg{i}` and

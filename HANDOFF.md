@@ -275,15 +275,42 @@ Remaining immediate work:
   multi-seed fit results.
 - Planned region-wise progression (no weak priors needed; scatter at nside=4
   is expected and the method is designed to scale with Nside):
-  Step A: Extend spatial coefficient path to dust, 2 regions, nside=4.
-    Dust SED has 2 parameters (beta_d, T_d1); template_terms will be 3 columns
-    (0th order + 2 first-order derivatives). Use 353 GHz dust-dominated maps
-    for region masks, independent of synchrotron masks.
+  Step A: COMPLETE. Spatial coefficient path extended to dust (2 regions,
+    nside=4). Dust-only seed-1 fit completes. Combined dust+synch at nside=4
+    does not converge reliably due to MBB (beta_d, T_d1) within-component
+    degeneracy and near-identical SED parameters across regions; this is
+    expected at nside=4 and will be resolved by moving to nside=8.
   Step B: Move to nside=8 with synchrotron and dust each at 2 regions.
     ~428 valid pixels at nside=8 (4x nside=4); validates Nside scaling.
+    First target: dust+synch combined fit converges reliably at nside=8.
   Step C: k-means ~5 regions each for synchrotron and dust at nside=8.
     Synchrotron regions from low-frequency maps; dust regions from 353 GHz.
     Final region counts and shapes kept independent between components.
+
+Step B nside=8 setup status:
+- Added `examples/LTD_config_ns8.ini` and nside=8 dust+synch 2-region configs:
+  `examples/DustSynch_var_9freq_regionwise2_ns8_r1e-2.ini`,
+  `examples/DustSynch_var_9freq_regionwise2_ns8_profile.ini`, and
+  `examples/DustSynch_var_9freq_regionwise2_ns8_trace_ncall20.ini`.
+- Generated local nside=8 PySM maps with:
+  `uv run python examples/run_pysm3.py examples/LTD_config_ns8.ini`.
+  The generated `examples/output_pysm3_ns8/` directory is ignored by git.
+- Generated 2-region median masks:
+  `synch40_median_ns8_*` from the 40 GHz synchrotron map and
+  `dust337_median_ns8_*` from the 337 GHz dust proxy map. Both use the
+  nside=4 analysis mask ud-graded to nside=8 and split 428 valid pixels into
+  214/214 pixels.
+- The nside=8 combined profile completed with
+  `D_matrix.shape == (9, 5)` and active spatial coefficients, confirming that
+  the region count still does not grow the D basis. However, one likelihood
+  evaluation initially took ~4.56 s on seed 2. Timing showed
+  `CalcH_matrix()` ~2.66 s, `CalcDelta()` ~0.63 s, and `ReturnlnDNID()` ~0.97 s.
+  `ReturnlnDNID()` was optimized to use the Cholesky diagonal identity
+  `log det(L L^T) = 2 sum(log(diag(L)))`, reducing that term to ~0.0001 s and
+  total evaluation time to ~3.49 s on seed 3. A full Minuit run is still likely
+  long; next engineering target is `CalcH_matrix()` / `CalcDelta()` caching or
+  block optimization, or defining a cheaper staged convergence test before
+  multi-seed full fits.
 
 Step A implementation status:
 - Dust spatial coefficients are implemented for `beta_d_dreg{i}` and

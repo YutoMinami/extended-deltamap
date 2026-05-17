@@ -22,14 +22,24 @@
     have 3 columns (0th order + 2 derivatives). Region masks derived from
     353 GHz dust-dominated maps, independent of synchrotron masks.
     Dust-only seed-1 fit completes locally with `D_matrix.shape == (7, 3)`.
-    Combined dust+synch setup uses `D_matrix.shape == (9, 5)`, but the full
-    fit is optimizer-limited: profiling shows each likelihood evaluation is
-    modest while Minuit uses many evaluations in the 7-parameter problem.
-    Next: decide whether to add staged fitting / stronger initialization before
-    using combined dust+synch for multi-seed recovery checks.
+    Combined dust+synch at nside=4 does not converge reliably: the (beta_d,
+    T_d1) pair introduces a within-component MBB degeneracy that is independent
+    of region count, and the near-identical SED parameters across the two regions
+    at nside=4 create an additional between-region swap degeneracy. This is
+    expected at nside=4 and not worth debugging further; nside=8 will provide
+    enough per-region pixels to relax both degeneracies.
+    Step A is considered validated: the spatial coefficient path works for dust.
   Step B — Move to nside=8 with 2 regions each for synchrotron and dust.
     nside=8 gives ~4x more pixels (~428 valid), providing enough per-region
     statistics to support more regions. Confirms the method scales with Nside.
+    Initial setup is complete: PySM nside=8 maps were generated locally, and
+    synch/dust median masks split 428 valid pixels into 214/214 regions.
+    Combined dust+synch profile keeps `D_matrix.shape == (9, 5)`, but one
+    likelihood evaluation initially took ~4.56 s. Replacing the `DNIDL`
+    logdet with the Cholesky diagonal formula reduced `ReturnlnDNID` from
+    ~0.97 s to ~0.0001 s and total evaluation time to ~3.49 s. Do not launch
+    multi-seed full fits until `CalcH_matrix()` / `CalcDelta()` are optimized
+    further or a cheaper staged test is chosen.
   Step C — k-means clustering with ~5 regions each for synchrotron and dust
     at nside=8. Synchrotron regions from low-frequency polarization maps;
     dust regions from 353 GHz dust-dominated maps. Final region counts and

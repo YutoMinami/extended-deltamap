@@ -4,5 +4,6 @@ __pycache__/
 *.egg-info/
 data/
 examples/output_pysm3_ns4/
+examples/output_pysm3_ns8/
 examples/inputs/
 examples/test_results/

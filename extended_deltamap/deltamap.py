@@ -85,6 +85,7 @@ class DeltaMap:
         self.migrad = True
         self.migrad_ncall = None
         self.minuit_trace = False
+        self.internal_timing = False
         self.r_verbose = False
 
     def _is_r_parameter(self, param):
@@ -1273,10 +1274,11 @@ class DeltaMap:
 
     def ReturnlnDNID(self):
         """Return the log-determinant contribution from the ``D^T N^{-1} D`` term."""
-        sign, det = numpy.linalg.slogdet(self.DNIDL)
-        # return 2*sign*det*self.size
-        # return 2*det*self.size
-        return 2 * det
+        diagonal = numpy.diag(self.DNIDL)
+        if numpy.any(diagonal <= 0.0):
+            self.valid = False
+            return numpy.inf
+        return 2.0 * numpy.log(diagonal).sum()
         # sign,det = numpy.linalg.slogdet(self.DNIDLU)
         # return sign*det*self.size
 
@@ -1343,11 +1345,21 @@ class DeltaMap:
 
         # lnAI =self.ReturnlnAI()
 
+        timings = []
+        start = time.perf_counter()
         nume = self.ReturnChiSquare()
+        timings.append(("ReturnChiSquare", time.perf_counter() - start))
+
+        start = time.perf_counter()
         lnS0 = self.ReturnlnS0()
+        timings.append(("ReturnlnS0", time.perf_counter() - start))
         denomi = 0.0
+        start = time.perf_counter()
         lnB = self.ReturnlnB()
+        timings.append(("ReturnlnB", time.perf_counter() - start))
+        start = time.perf_counter()
         lnDNID = self.ReturnlnDNID()
+        timings.append(("ReturnlnDNID", time.perf_counter() - start))
         """
 		if self.is_noise_matrix:
 			lnAI = self.ReturnlnAI()
@@ -1375,6 +1387,10 @@ class DeltaMap:
         # return mNIAINIm + lnS + mNm +  MHM + MHBIHM +lnB+lnAI + lnDNID
         # return mNIAINIm + lnS0 + mNm +  MHM + MHBIHM +lnB + lnDNID
         # return mNIAINIm + lnS0 + mNm +  MHM + MHBIHM - lnAI
+        if self.internal_timing:
+            total = sum(elapsed for _, elapsed in timings)
+            timing_text = ", ".join(f"{name}={elapsed:.6f}s" for name, elapsed in timings)
+            print(f"timing ReturnLikelihood: {timing_text}, measured_total={total:.6f}s")
         return denomi + nume
 
     def IterateMinimize(self):
@@ -1651,37 +1667,49 @@ class DeltaMap:
         Returns:
             ``True`` when all intermediate calculations succeed, otherwise ``False``.
         """
+        timings = []
+
+        def timed_step(name, func):
+            start = time.perf_counter()
+            result = func()
+            timings.append((name, time.perf_counter() - start))
+            return result
+
         self.valid = True
         # self.CalcTmpVec()
         # self.CalcNIm()#TODO
-        self.CalcCMB0Inverse()
+        timed_step("CalcCMB0Inverse", self.CalcCMB0Inverse)
         if not self.valid:
             return False
-        self.CalcA()
+        timed_step("CalcA", self.CalcA)
         if not self.valid:
             return False
-        self.CalcAI_NIm()
-        self.CalcMeanVec()
+        timed_step("CalcAI_NIm", self.CalcAI_NIm)
+        timed_step("CalcMeanVec", self.CalcMeanVec)
         if self.is_noise_matrix:
-            self.CalcH_matrix()
+            timed_step("CalcH_matrix", self.CalcH_matrix)
             # self.CalcDTNIDc()
             # self.CalcDTNIM()
-            self.CalcDTNID_I_DTNIM()
-            self.CalcDcTNID_DTNID_I_DTNIM()
-            self.CalcDelta()
+            timed_step("CalcDTNID_I_DTNIM", self.CalcDTNID_I_DTNIM)
+            timed_step("CalcDcTNID_DTNID_I_DTNIM", self.CalcDcTNID_DTNID_I_DTNIM)
+            timed_step("CalcDelta", self.CalcDelta)
 
         else:
-            self.CalcH()
+            timed_step("CalcH", self.CalcH)
         if not self.valid:
             return False
 
-        self.CalcB()
+        timed_step("CalcB", self.CalcB)
         if not self.valid:
             return False
         # self.CalcAm()
         # self.CalcMiddle()
         if self.is_noise_matrix:
-            self.CalcBIDcTNID_DTNID_I_DTNIM()
+            timed_step("CalcBIDcTNID_DTNID_I_DTNIM", self.CalcBIDcTNID_DTNID_I_DTNIM)
+        if self.internal_timing:
+            total = sum(elapsed for _, elapsed in timings)
+            timing_text = ", ".join(f"{name}={elapsed:.6f}s" for name, elapsed in timings)
+            print(f"timing CalcInOneLoop: {timing_text}, measured_total={total:.6f}s")
         return True
 
     def is_pos_def(self, A):

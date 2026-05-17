@@ -1645,32 +1645,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("xR +/- = {0:.2f} +/- {1:.2f}".format(xr_mean, xr_std))
         dmp.SetxRPrior(xr_mean, xr_std * xr_sigma)
 
-    profile_only = False
-    try:
-        profile_only = get_bool_value(fit_parser, ("diagnostics", "profile_only"), ("par", "profile_only"))
-    except (configparser.NoOptionError, ValueError):
-        pass
-    profile_repeats = 3
-    try:
-        profile_repeats = get_int_value(
-            fit_parser,
-            ("diagnostics", "profile_repeats"),
-            ("par", "profile_repeats"),
-        )
-    except (configparser.NoOptionError, ValueError):
-        pass
-    if profile_only:
-        dmp.lh = run_likelihood_profile(dmp, profile_repeats)
-        dmp.param_errors = {key: numpy.nan for key in dmp.param_values.keys()}
-        write_fit_result_csv(
-            oname,
-            seed=args.seed,
-            likelihood=dmp.lh,
-            param_values=dmp.param_values,
-            param_errors=dmp.param_errors,
-        )
-        return 0
-
     with_migrad = True
     try:
         with_migrad = get_bool_value(fit_parser, ("fit", "migrad"), ("par", "migrad"))
@@ -1697,6 +1671,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except (configparser.NoOptionError, ValueError):
         pass
+    try:
+        dmp.internal_timing = get_bool_value(
+            fit_parser,
+            ("diagnostics", "internal_timing"),
+            ("fit", "internal_timing"),
+            ("par", "internal_timing"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+
+    profile_only = False
+    try:
+        profile_only = get_bool_value(fit_parser, ("diagnostics", "profile_only"), ("par", "profile_only"))
+    except (configparser.NoOptionError, ValueError):
+        pass
+    profile_repeats = 3
+    try:
+        profile_repeats = get_int_value(
+            fit_parser,
+            ("diagnostics", "profile_repeats"),
+            ("par", "profile_repeats"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+    if profile_only:
+        dmp.lh = run_likelihood_profile(dmp, profile_repeats)
+        dmp.param_errors = {key: numpy.nan for key in dmp.param_values.keys()}
+        write_fit_result_csv(
+            oname,
+            seed=args.seed,
+            likelihood=dmp.lh,
+            param_values=dmp.param_values,
+            param_errors=dmp.param_errors,
+        )
+        return 0
 
     simul = False
     try:

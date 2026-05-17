@@ -250,16 +250,28 @@ Validation completed:
   - 4-region seed-1 fit now completes locally; output was
     `r = 0.0115087091 +/- 0.0035587728`, with all four
     `beta_s_sreg*` values near `-3`.
+- Seeds 1-10 were run for the 4-region spatial-coefficient config. All runs
+  completed and wrote CSV outputs under
+  `examples/test_results/Synch_var_3freq_regionwise4_r1e-2/`.
+- Seed 1-10 4-region summary:
+  - `r`: mean `0.010672412`, sample std `0.0035385558`,
+    min `0.0056552733`, max `0.015234329`
+  - `beta_s_sreg0`: mean `-3.0380741`, sample std `0.11750109`,
+    min `-3.1729155`, max `-2.8003778`
+  - `beta_s_sreg1`: mean `-2.9645623`, sample std `0.11000173`,
+    min `-3.2106326`, max `-2.8286982`
+  - `beta_s_sreg2`: mean `-3.032954`, sample std `0.098366799`,
+    min `-3.2021492`, max `-2.9157604`
+  - `beta_s_sreg3`: mean `-3.0463102`, sample std `0.074396639`,
+    min `-3.2098041`, max `-2.9676918`
 
 Remaining immediate work:
-- Run the 4-region seed comparison against the unregioned and 2-region
-  baselines.
 - Add a stronger end-to-end regression for 2-region spatial coefficients versus
   the old column-mask path, ideally at the likelihood or fit-output level.
 - Decide whether to keep the old column-mask implementation as a debugging
   reference only or retire it from the normal region-wise path.
-- If 4 regions remain stable and affordable, move toward the longer-term
-  8-10 region clustering target.
+- Decide whether to try 8 regions next, or first add weak priors / regularizing
+  checks for the broader `beta_s_sreg*` scatter seen in the 4-region fit.
 
 ### Step 1 — Region mask creation
 - Create boolean pixel masks of shape `(n_pix,)` for each region.

@@ -16,13 +16,12 @@
   `order=2` likelihood becomes unstable even when the first-order model works.
 - Region-wise foreground-parameter prototype is implemented and has passed the
   first 10-seed 2-region synchrotron-only comparison against the unregioned
-  baseline. A 4-region quantile split config now exists; next work is reducing
-  or bypassing the heavy iterative fit cost enough to validate it over seeds.
+  baseline and a first 10-seed 4-region synchrotron-only comparison.
   Spatial coefficient / region expansion path is now implemented for
   synchrotron-only first-order region fits, keeping the sky-side D column count
-  fixed at 2 regardless of region count. Next, run a broader 4-region seed
-  comparison and then decide whether to make this path the default public
-  region implementation.
+  fixed at 2 regardless of region count. Next, decide whether to make this path
+  the default public region implementation and whether to retire the old
+  column-mask path from normal use.
 - Keep dust and synchrotron region sets independent in the design; their
   clustering maps, region masks, parameter names, and final region counts may
   differ.

@@ -236,25 +236,28 @@ Validation completed:
   `data/notes/REGIONWISE_PARAMETER_DELTAMAP_JA.md` now records this formula
   and the implementation plan. The note is under gitignored `data/`, so it is
   local documentation rather than a tracked artifact.
+- Spatial coefficient path has now been implemented for synchrotron-only,
+  first-order region fits:
+  - `DMatrix.SetSpatialCoefficients(...)` stores symbolic template terms plus a
+    coefficient builder.
+  - `DeltaMap.CalcH_matrix()` uses the spatial path when present; no-region
+    scalar broadcast is covered by a regression test.
+  - `examples/TestDeltamap.py` selects the spatial synchrotron path when
+    `synch_region_masks` are present, `isdust=False`, `uni=False`, and
+    `order == 1`.
+  - 2-region setup now reports `D.shape == (3, 2)`,
+    `DTNIDc.shape == (428, 214)`, and `DTNIM.shape == (428, 1)`.
+  - 4-region seed-1 fit now completes locally; output was
+    `r = 0.0115087091 +/- 0.0035587728`, with all four
+    `beta_s_sreg*` values near `-3`.
 
 Remaining immediate work:
-- Add the spatial coefficient path while keeping the existing column-mask path
-  as a reference implementation.
-- Validate the new path with two regression tests:
-  1. No-region case: spatial coefficient path (scalar broadcast) must produce
-     identical `DTNID`, `DTNIDc`, and `DTNIM` values to the original scalar
-     `D[k, i]` path.
-  2. 2-region case: spatial coefficient path should be equivalent to the
-     current column-mask path after projecting/removing the redundant
-     region-masked sky-vector copies. The raw matrix shapes should not be
-     identical if the size reduction is working: old column-mask shape scales
-     with region count, while the new spatial-coefficient shape keeps the
-     sky-side column count fixed. Check the expected reduced shapes, compare
-     projected/effective numerical values where practical, and compare
-     likelihood or fit outputs as the end-to-end regression.
-- Re-run the 4-region seed-1 fit with the spatial coefficient path; if it
-  completes, run the same seed comparison against the unregioned and 2-region
+- Run the 4-region seed comparison against the unregioned and 2-region
   baselines.
+- Add a stronger end-to-end regression for 2-region spatial coefficients versus
+  the old column-mask path, ideally at the likelihood or fit-output level.
+- Decide whether to keep the old column-mask implementation as a debugging
+  reference only or retire it from the normal region-wise path.
 - If 4 regions remain stable and affordable, move toward the longer-term
   8-10 region clustering target.
 

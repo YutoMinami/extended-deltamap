@@ -27,6 +27,7 @@ class DMatrix:
         self.verbose = verbose
         self.component_masks = []
         self.column_masks = []
+        self.spatial_coefficient_builder = None
         pass
 
     def SetGnu(self, gnu):
@@ -187,6 +188,20 @@ class DMatrix:
             print(self.dim_params, self.n_freqs)
             print((l_Dmatrix))
         self.D_matrix = sympy.Matrix(l_Dmatrix)
+
+    def SetSpatialCoefficients(self, template_terms, coefficient_builder):
+        """Use pixel-dependent mixing coefficients for prepared D columns.
+
+        Args:
+            template_terms: Symbolic terms used for column count and free-symbol
+                discovery. The numeric values are not used by ``DeltaMap`` when
+                the spatial coefficient builder is active.
+            coefficient_builder: Callable receiving ``(freqs, param_values,
+                size)`` and returning an array with shape
+                ``(n_freqs, n_columns, size)``.
+        """
+        self._set_matrix_from_template_terms(template_terms)
+        self.spatial_coefficient_builder = coefficient_builder
 
     def DiffD(self, order=1):
         """Populate the template with each component and its derivatives.

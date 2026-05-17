@@ -18,12 +18,11 @@
   first 10-seed 2-region synchrotron-only comparison against the unregioned
   baseline. A 4-region quantile split config now exists; next work is reducing
   or bypassing the heavy iterative fit cost enough to validate it over seeds.
-  Feasible next approach: add a spatial coefficient / region expansion path
-  that maps scalar region parameters to pixel-wise coefficients, keeping the
-  sky-side D column count fixed (for synch first-order, 2 columns regardless of
-  region count). This should avoid the current O(n_regions²) H matrix growth.
-  Keep the existing column-mask path initially, then add a 2-region regression
-  test that the new spatial-coefficient path matches the old implementation.
+  Spatial coefficient / region expansion path is now implemented for
+  synchrotron-only first-order region fits, keeping the sky-side D column count
+  fixed at 2 regardless of region count. Next, run a broader 4-region seed
+  comparison and then decide whether to make this path the default public
+  region implementation.
 - Keep dust and synchrotron region sets independent in the design; their
   clustering maps, region masks, parameter names, and final region counts may
   differ.

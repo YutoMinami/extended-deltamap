@@ -572,6 +572,108 @@ class SmokeTests(unittest.TestCase):
         self.assertTrue(np.allclose(dmp.DTNIDc, expected_dtnidc))
         self.assertTrue(np.allclose(dmp.DTNIM, expected_dtnim))
 
+    def test_spatial_coefficients_match_scalar_d_path_for_no_regions(self) -> None:
+        scalar_dmp = DeltaMap()
+        spatial_dmp = DeltaMap()
+        beta = sympy.Symbol("beta")
+        d_matrix = sympy.Matrix([[1.0, 2.0], [3.0, beta]])
+        ni_list = [
+            np.array([[2.0, 0.1], [0.1, 1.0]]),
+            np.array([[1.0, 0.2], [0.2, 3.0]]),
+        ]
+        meanvec = [
+            np.array([[0.5], [1.0]]),
+            np.array([[1.5], [-0.5]]),
+        ]
+
+        for dmp in (scalar_dmp, spatial_dmp):
+            dmp.dmtrx = DMatrix()
+            dmp.dmtrx.D_matrix = d_matrix
+            dmp.dmtrx.freqs = np.array([40.0, 60.0])
+            dmp.dmtrx.column_masks = [None, None]
+            dmp.params = [beta]
+            dmp.param_values = {"beta": 4.0}
+            dmp.size = 2
+            dmp.NI_list = ni_list
+            dmp.meanvec = meanvec
+            dmp.AL = np.linalg.cholesky(np.eye(2) * 1000.0)
+
+        def coefficient_builder(freqs, param_values, size):
+            scalar = np.array([[1.0, 2.0], [3.0, param_values["beta"]]])
+            return np.repeat(scalar[:, :, None], size, axis=2)
+
+        spatial_dmp.dmtrx.spatial_coefficient_builder = coefficient_builder
+
+        scalar_dmp.CalcH_matrix()
+        spatial_dmp.CalcH_matrix()
+
+        self.assertTrue(
+            np.allclose(
+                scalar_dmp.DNIDL @ scalar_dmp.DNIDL.T,
+                spatial_dmp.DNIDL @ spatial_dmp.DNIDL.T,
+            )
+        )
+        self.assertTrue(np.allclose(scalar_dmp.DTNIDc, spatial_dmp.DTNIDc))
+        self.assertTrue(np.allclose(scalar_dmp.DTNIM, spatial_dmp.DTNIM))
+
+    def test_spatial_coefficients_use_reduced_region_column_count(self) -> None:
+        dmp = DeltaMap()
+        dmp.dmtrx = DMatrix()
+        beta0 = sympy.Symbol("beta_s_sreg0")
+        beta1 = sympy.Symbol("beta_s_sreg1")
+        dmp.dmtrx.D_matrix = sympy.Matrix(
+            [
+                [beta0 + beta1, 2.0 * beta0 + 3.0 * beta1],
+                [4.0 * beta0 + beta1, beta0 - beta1],
+            ]
+        )
+        dmp.dmtrx.freqs = np.array([40.0, 60.0])
+        dmp.dmtrx.column_masks = [None, None]
+        dmp.params = [beta0, beta1]
+        dmp.param_values = {"beta_s_sreg0": 1.0, "beta_s_sreg1": 2.0}
+        dmp.size = 2
+        dmp.NI_list = [
+            np.array([[2.0, 0.1], [0.1, 1.0]]),
+            np.array([[1.0, 0.2], [0.2, 3.0]]),
+        ]
+        dmp.meanvec = [
+            np.array([[0.5], [1.0]]),
+            np.array([[1.5], [-0.5]]),
+        ]
+        dmp.AL = np.linalg.cholesky(np.eye(2) * 1000.0)
+
+        coefficients = np.array(
+            [
+                [[1.0, 2.0], [2.0, 6.0]],
+                [[4.0, 2.0], [-1.0, -1.0]],
+            ]
+        )
+        dmp.dmtrx.spatial_coefficient_builder = (
+            lambda freqs, param_values, size: coefficients
+        )
+
+        dmp.CalcH_matrix()
+
+        expected_blocks = []
+        for i in range(2):
+            row_blocks = []
+            for j in range(2):
+                block = np.zeros_like(dmp.NI_list[0])
+                for k, ni_k in enumerate(dmp.NI_list):
+                    block += (
+                        coefficients[k, i][:, None]
+                        * ni_k
+                        * coefficients[k, j][None, :]
+                    )
+                row_blocks.append(block)
+            expected_blocks.append(row_blocks)
+        expected_dtnid = np.block(expected_blocks)
+
+        self.assertEqual((dmp.DNIDL @ dmp.DNIDL.T).shape, (4, 4))
+        self.assertTrue(np.allclose(dmp.DNIDL @ dmp.DNIDL.T, expected_dtnid))
+        self.assertEqual(dmp.DTNIDc.shape, (4, 2))
+        self.assertEqual(dmp.DTNIM.shape, (4, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

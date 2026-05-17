@@ -510,6 +510,11 @@ class DeltaMap:
             if self.verbose:
                 print(str(param) + ": ", self.param_values[param.name])
         D = sympy.matrix2numpy(D, dtype=numpy.float64)
+        spatial_coefficients = self._spatial_coefficients(D)
+        if spatial_coefficients is not None:
+            self._calc_h_matrix_from_spatial_coefficients(spatial_coefficients)
+            return
+
         column_masks = self._column_masks(D.shape[1])
         matrix_list = []
         for i in range(self.dmtrx.D_matrix.shape[1]):
@@ -563,6 +568,70 @@ class DeltaMap:
                     row_mask=column_masks[i],
                 )
                 element += D[j, i] * (masked_ni @ self.meanvec[j])
+            i_list.append(element)
+            matrix_list.append(i_list)
+        self.DTNIM = numpy.block(matrix_list)
+
+    def _spatial_coefficients(self, scalar_d_matrix):
+        """Return optional pixel-dependent D coefficients for each column."""
+        builder = getattr(self.dmtrx, "spatial_coefficient_builder", None)
+        if builder is None:
+            return None
+        coefficients = numpy.asarray(
+            builder(self.dmtrx.freqs, self.param_values, self.size),
+            dtype=numpy.float64,
+        )
+        expected_shape = (
+            len(self.NI_list),
+            scalar_d_matrix.shape[1],
+            self.NI_list[0].shape[0],
+        )
+        if coefficients.shape != expected_shape:
+            raise ValueError(
+                "Spatial coefficient shape must be "
+                f"{expected_shape}, got {coefficients.shape}"
+            )
+        return coefficients
+
+    def _calc_h_matrix_from_spatial_coefficients(self, coefficients):
+        """Build H-matrix terms from pixel-dependent D coefficients."""
+        n_columns = coefficients.shape[1]
+        matrix_list = []
+        for i in range(n_columns):
+            i_list = []
+            for j in range(n_columns):
+                element = numpy.zeros_like(self.NI_list[0])
+                for k, ni_k in enumerate(self.NI_list):
+                    element += (
+                        coefficients[k, i][:, None]
+                        * ni_k
+                        * coefficients[k, j][None, :]
+                    )
+                i_list.append(element)
+            matrix_list.append(i_list)
+
+        DTNID = numpy.block(matrix_list)
+        self.DNIDL = self.stable_cholesky(DTNID, lower=True)
+
+        matrix_list = []
+        for i in range(n_columns):
+            i_list = []
+            element = numpy.zeros_like(self.NI_list[0])
+            for k, ni_k in enumerate(self.NI_list):
+                element += coefficients[k, i][:, None] * ni_k
+            i_list.append(element)
+            matrix_list.append(i_list)
+        self.DTNIDc = numpy.block(matrix_list)
+
+        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve((self.AL, True), self.DTNIDc.T)
+        self.DT_SpNI_DL = self.stable_cholesky(DT_SpNI_D, lower=True)
+
+        matrix_list = []
+        for i in range(n_columns):
+            i_list = []
+            element = numpy.zeros_like(self.meanvec[0])
+            for k, ni_k in enumerate(self.NI_list):
+                element += coefficients[k, i][:, None] * (ni_k @ self.meanvec[k])
             i_list.append(element)
             matrix_list.append(i_list)
         self.DTNIM = numpy.block(matrix_list)

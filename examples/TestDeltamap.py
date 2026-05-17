@@ -283,6 +283,63 @@ def add_synch_components_to_dmatrix(
         dmt.AddD(make_synch_template(templates, beta_name), region_mask=region_mask)
 
 
+def add_spatial_synch_components_to_dmatrix(
+    dmt: DMatrix,
+    templates: Templates,
+    synch_region_masks: Sequence[numpy.ndarray],
+) -> None:
+    """Add synchrotron terms using pixel-dependent region coefficients."""
+    beta_symbols = [
+        sympy.Symbol(region_parameter_name("beta_s", "sreg", index))
+        for index in range(len(synch_region_masks))
+    ]
+    synch_terms = [
+        make_synch_template(templates, beta_symbol.name)
+        for beta_symbol in beta_symbols
+    ]
+    synch_derivatives = [
+        sympy.diff(term, beta_symbol)
+        for term, beta_symbol in zip(synch_terms, beta_symbols)
+    ]
+    template_terms = [
+        sympy.simplify(sum(synch_terms) / len(synch_terms)),
+        sympy.simplify(sum(synch_derivatives) / len(synch_derivatives)),
+    ]
+    region_masks = [
+        numpy.asarray(region_mask, dtype=numpy.float64)
+        for region_mask in synch_region_masks
+    ]
+
+    def coefficient_builder(freqs, param_values, size):
+        coefficients = numpy.zeros((len(freqs), 2, size), dtype=numpy.float64)
+        for region_mask in region_masks:
+            if region_mask.shape != (size,):
+                raise ValueError(
+                    "Region mask length must match DeltaMap size for spatial "
+                    f"coefficients: {region_mask.shape} != ({size},)"
+                )
+        for freq_index, nu_value in enumerate(freqs):
+            for region_mask, term, derivative, beta_symbol in zip(
+                region_masks,
+                synch_terms,
+                synch_derivatives,
+                beta_symbols,
+            ):
+                substitutions = {
+                    sympy.Symbol("nu"): float(nu_value),
+                    beta_symbol: param_values[beta_symbol.name],
+                }
+                coefficients[freq_index, 0] += (
+                    float(term.subs(substitutions)) * region_mask
+                )
+                coefficients[freq_index, 1] += (
+                    float(derivative.subs(substitutions)) * region_mask
+                )
+        return coefficients
+
+    dmt.SetSpatialCoefficients(template_terms, coefficient_builder)
+
+
 def load_synch_region_masks(
     fit_parser: configparser.ConfigParser,
     fitconfig_dir: Path,
@@ -841,15 +898,25 @@ def test_fg_with_noise_cov(
         dmp.initialise()
         return dmp
 
+    use_spatial_synch_regions = (
+        synch_region_masks is not None
+        and issynch
+        and not isdust
+        and not uni
+        and order == 1
+    )
+
     dmt = DMatrix()
     if isdust:
         dmt.AddD(mbb1)
-    if issynch:
+    if issynch and not use_spatial_synch_regions:
         add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
 
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
-    if uni:
+    if use_spatial_synch_regions:
+        add_spatial_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
+    elif uni:
         dmt.PrepareUniformDMatrix()
     else:
         dmt.PrepareDMatrix(order=order)
@@ -1028,15 +1095,25 @@ def test_fg_with_noise_cov_xref(
         dmp.initialise()
         return dmp
 
+    use_spatial_synch_regions = (
+        synch_region_masks is not None
+        and issynch
+        and not isdust
+        and not uni
+        and order == 1
+    )
+
     dmt = DMatrix()
     if isdust:
         dmt.AddD(mbb1)
-    if issynch:
+    if issynch and not use_spatial_synch_regions:
         add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
 
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
-    if uni:
+    if use_spatial_synch_regions:
+        add_spatial_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
+    elif uni:
         dmt.PrepareUniformDMatrix()
     else:
         dmt.PrepareDMatrix(order=order)

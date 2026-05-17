@@ -266,14 +266,21 @@ Validation completed:
     min `-3.2098041`, max `-2.9676918`
 
 Remaining immediate work:
-- Add a stronger end-to-end regression for 2-region spatial coefficients versus
-  the old column-mask path, ideally at the likelihood or fit-output level.
-- Decide whether to keep the old column-mask implementation as a debugging
-  reference only or retire it from the normal region-wise path.
+- Retire the old column-mask region path from normal use. The spatial
+  coefficient path is now the supported region-wise implementation. The
+  column-mask code in `CalcH_matrix()` and `DMatrix` can be kept temporarily
+  as dead code for reference, but should not be the active path for any
+  region-wise fit. End-to-end regression against the column-mask path is not
+  required; the spatial path is validated by direct coefficient checks and
+  multi-seed fit results.
 - Decide whether to try 8 regions next, or first add weak priors / regularizing
   checks for the broader `beta_s_sreg*` scatter seen in the 4-region fit.
 
 Review follow-ups completed after the spatial coefficient implementation:
+- The old `add_synch_components_to_dmatrix(..., synch_region_masks=...)`
+  column-mask helper now raises if region masks are passed. Normal region-wise
+  fits must use the spatial coefficient path; lower-level `DMatrix` column-mask
+  support remains temporarily as reference code and for focused tests.
 - `add_spatial_synch_components_to_dmatrix()` now uses explicit summed template
   terms for symbol collection instead of averaging region-specific templates.
 - `test_fg_with_noise_cov()` and `_xref` now raise early when

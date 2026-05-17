@@ -273,14 +273,13 @@ def add_synch_components_to_dmatrix(
     templates: Templates,
     synch_region_masks: Sequence[numpy.ndarray] | None = None,
 ) -> None:
-    """Add uniform or region-wise synchrotron components to a DMatrix."""
-    if synch_region_masks is None:
-        dmt.AddD(templates.ReturnPowerLawSynch())
-        return
-
-    for index, region_mask in enumerate(synch_region_masks):
-        beta_name = region_parameter_name("beta_s", "sreg", index)
-        dmt.AddD(make_synch_template(templates, beta_name), region_mask=region_mask)
+    """Add the uniform synchrotron component to a DMatrix."""
+    if synch_region_masks is not None:
+        raise ValueError(
+            "column-mask synchrotron regions are retired from normal use; "
+            "use add_spatial_synch_components_to_dmatrix instead"
+        )
+    dmt.AddD(templates.ReturnPowerLawSynch())
 
 
 def use_spatial_synch_region_coefficients(

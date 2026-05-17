@@ -309,28 +309,18 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(expanded["beta_s_sreg0"], [-3.1, (-10.0, -0.01)])
         self.assertEqual(expanded["beta_s_sreg1"], [-3.6, (-10.0, -0.01)])
 
-    def test_region_synch_components_add_symbols_and_masks(self) -> None:
+    def test_retired_column_mask_synch_helper_rejects_region_masks(self) -> None:
         templates = Templates()
         dmatrix = DMatrix()
         mask0 = np.array([True, False, True, False])
         mask1 = np.array([False, True, False, True])
 
-        example_testdeltamap.add_synch_components_to_dmatrix(
-            dmatrix,
-            templates,
-            [mask0, mask1],
-        )
-        dmatrix.SetFreqs([40.0, 60.0, 140.0], [None, None, None])
-        dmatrix.PrepareDMatrix(order=1)
-
-        params_by_component = [
-            [param.name for param in params] for params in dmatrix.d_params
-        ]
-        self.assertEqual(params_by_component, [["beta_s_sreg0"], ["beta_s_sreg1"]])
-        self.assertIs(dmatrix.column_masks[0], mask0)
-        self.assertIs(dmatrix.column_masks[1], mask0)
-        self.assertIs(dmatrix.column_masks[2], mask1)
-        self.assertIs(dmatrix.column_masks[3], mask1)
+        with self.assertRaisesRegex(ValueError, "retired"):
+            example_testdeltamap.add_synch_components_to_dmatrix(
+                dmatrix,
+                templates,
+                [mask0, mask1],
+            )
 
     def test_spatial_synch_region_setup_uses_numeric_coefficients(self) -> None:
         templates = Templates()

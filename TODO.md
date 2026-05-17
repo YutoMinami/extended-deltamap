@@ -14,14 +14,24 @@
 - Check whether `nside=4` is simply too coarse to constrain the added
   second-order sky-side terms; low spatial information may be part of why the
   `order=2` likelihood becomes unstable even when the first-order model works.
-- Region-wise foreground-parameter prototype is implemented and has passed the
-  first 10-seed 2-region synchrotron-only comparison against the unregioned
-  baseline and a first 10-seed 4-region synchrotron-only comparison.
-  Spatial coefficient / region expansion path is now implemented for
-  synchrotron-only first-order region fits, keeping the sky-side D column count
-  fixed at 2 regardless of region count. Next, decide whether to make this path
-  the default public region implementation and whether to retire the old
-  column-mask path from normal use.
+- Region-wise foreground-parameter prototype is implemented and validated for
+  synchrotron-only fits up to 4 regions. Spatial coefficient path is the
+  supported implementation. Planned progression:
+  Step A — Extend spatial coefficient path to dust (2 regions, nside=4).
+    Dust template has 2 SED parameters (beta_d, T_d1), so template_terms will
+    have 3 columns (0th order + 2 derivatives). Region masks derived from
+    353 GHz dust-dominated maps, independent of synchrotron masks.
+    Validates r recovery with both synchrotron and dust region-wise.
+  Step B — Move to nside=8 with 2 regions each for synchrotron and dust.
+    nside=8 gives ~4x more pixels (~428 valid), providing enough per-region
+    statistics to support more regions. Confirms the method scales with Nside.
+  Step C — k-means clustering with ~5 regions each for synchrotron and dust
+    at nside=8. Synchrotron regions from low-frequency polarization maps;
+    dust regions from 353 GHz dust-dominated maps. Final region counts and
+    shapes are independent between components.
+  The region-wise approach is motivated by Nside scaling: more pixels allow
+  more regions, and the spatial coefficient path keeps H matrix size fixed
+  regardless of region count.
 - Keep dust and synchrotron region sets independent in the design; their
   clustering maps, region masks, parameter names, and final region counts may
   differ.

@@ -273,8 +273,17 @@ Remaining immediate work:
   region-wise fit. End-to-end regression against the column-mask path is not
   required; the spatial path is validated by direct coefficient checks and
   multi-seed fit results.
-- Decide whether to try 8 regions next, or first add weak priors / regularizing
-  checks for the broader `beta_s_sreg*` scatter seen in the 4-region fit.
+- Planned region-wise progression (no weak priors needed; scatter at nside=4
+  is expected and the method is designed to scale with Nside):
+  Step A: Extend spatial coefficient path to dust, 2 regions, nside=4.
+    Dust SED has 2 parameters (beta_d, T_d1); template_terms will be 3 columns
+    (0th order + 2 first-order derivatives). Use 353 GHz dust-dominated maps
+    for region masks, independent of synchrotron masks.
+  Step B: Move to nside=8 with synchrotron and dust each at 2 regions.
+    ~428 valid pixels at nside=8 (4x nside=4); validates Nside scaling.
+  Step C: k-means ~5 regions each for synchrotron and dust at nside=8.
+    Synchrotron regions from low-frequency maps; dust regions from 353 GHz.
+    Final region counts and shapes kept independent between components.
 
 Review follow-ups completed after the spatial coefficient implementation:
 - The old `add_synch_components_to_dmatrix(..., synch_region_masks=...)`

@@ -332,6 +332,79 @@ class SmokeTests(unittest.TestCase):
         self.assertIs(dmatrix.column_masks[2], mask1)
         self.assertIs(dmatrix.column_masks[3], mask1)
 
+    def test_spatial_synch_region_setup_uses_numeric_coefficients(self) -> None:
+        templates = Templates()
+        dmatrix = DMatrix()
+        mask0 = np.array([True, False, True, False])
+        mask1 = np.array([False, True, False, True])
+        dmatrix.SetFreqs([60.0], [None])
+
+        example_testdeltamap.add_spatial_synch_components_to_dmatrix(
+            dmatrix,
+            templates,
+            [mask0, mask1],
+        )
+
+        coefficients = dmatrix.spatial_coefficient_builder(
+            dmatrix.freqs,
+            {"beta_s_sreg0": -3.0, "beta_s_sreg1": -3.5},
+            len(mask0),
+        )
+
+        self.assertEqual(dmatrix.D_matrix.shape, (1, 2))
+        self.assertIn(sympy.Symbol("beta_s_sreg0"), dmatrix.D_matrix.free_symbols)
+        self.assertIn(sympy.Symbol("beta_s_sreg1"), dmatrix.D_matrix.free_symbols)
+        self.assertEqual(coefficients.shape, (1, 2, 4))
+        self.assertTrue(np.all(np.isfinite(coefficients)))
+        beta0 = sympy.Symbol("beta_s_sreg0")
+        beta1 = sympy.Symbol("beta_s_sreg1")
+        expected0 = float(
+            templates.ReturnPowerLawSynch(symbol_name=beta0.name).subs(
+                {sympy.Symbol("nu"): 60.0, beta0: -3.0}
+            )
+        )
+        expected1 = float(
+            templates.ReturnPowerLawSynch(symbol_name=beta1.name).subs(
+                {sympy.Symbol("nu"): 60.0, beta1: -3.5}
+            )
+        )
+        self.assertTrue(
+            np.allclose(coefficients[0, 0, mask0], expected0)
+        )
+        self.assertTrue(
+            np.allclose(coefficients[0, 0, mask1], expected1)
+        )
+        self.assertFalse(np.allclose(coefficients[0, 1, mask0], coefficients[0, 1, mask1]))
+
+    def test_spatial_synch_region_guard_rejects_unsupported_fallbacks(self) -> None:
+        masks = [np.array([True, False]), np.array([False, True])]
+
+        self.assertTrue(
+            example_testdeltamap.use_spatial_synch_region_coefficients(
+                masks,
+                isdust=False,
+                issynch=True,
+                uni=False,
+                order=1,
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "isdust=True"):
+            example_testdeltamap.use_spatial_synch_region_coefficients(
+                masks,
+                isdust=True,
+                issynch=True,
+                uni=False,
+                order=1,
+            )
+        with self.assertRaisesRegex(ValueError, "order=2"):
+            example_testdeltamap.use_spatial_synch_region_coefficients(
+                masks,
+                isdust=False,
+                issynch=True,
+                uni=False,
+                order=2,
+            )
+
     def test_region_masks_are_restricted_to_observed_qu_layout(self) -> None:
         analysis_mask = np.array([True, False, True])
         pixel_region_mask = np.array([True, False, False])

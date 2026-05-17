@@ -273,6 +273,18 @@ Remaining immediate work:
 - Decide whether to try 8 regions next, or first add weak priors / regularizing
   checks for the broader `beta_s_sreg*` scatter seen in the 4-region fit.
 
+Review follow-ups completed after the spatial coefficient implementation:
+- `add_spatial_synch_components_to_dmatrix()` now uses explicit summed template
+  terms for symbol collection instead of averaging region-specific templates.
+- `test_fg_with_noise_cov()` and `_xref` now raise early when
+  `synch_region_masks` are used with unsupported settings such as
+  `isdust=True`, `uni=True`, or `order != 1`, avoiding silent fallback to the
+  slow column-mask path.
+- The spatial coefficient builder now uses `sympy.lambdify` for synchrotron SED
+  and derivative evaluations in the Minuit hot path.
+- Regression coverage was added for the unsupported-mode guard and for numeric
+  spatial coefficients. A 4-region seed-11 fit completed after these changes.
+
 ### Step 1 — Region mask creation
 - Create boolean pixel masks of shape `(n_pix,)` for each region.
 - Expand to full Q/U size: `numpy.concatenate([mask_pix, mask_pix])` → shape `(size,)`.

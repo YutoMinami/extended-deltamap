@@ -283,6 +283,33 @@ def add_synch_components_to_dmatrix(
         dmt.AddD(make_synch_template(templates, beta_name), region_mask=region_mask)
 
 
+def use_spatial_synch_region_coefficients(
+    synch_region_masks: Sequence[numpy.ndarray] | None,
+    isdust: bool,
+    issynch: bool,
+    uni: bool,
+    order: int,
+) -> bool:
+    """Return whether the fast spatial synchrotron region path should be used."""
+    if synch_region_masks is None or not issynch:
+        return False
+
+    unsupported = []
+    if isdust:
+        unsupported.append("isdust=True")
+    if uni:
+        unsupported.append("uni=True")
+    if order != 1:
+        unsupported.append(f"order={order}")
+    if unsupported:
+        raise ValueError(
+            "synch_region_masks currently require the spatial synchrotron-only "
+            "first-order path; unsupported settings: "
+            + ", ".join(unsupported)
+        )
+    return True
+
+
 def add_spatial_synch_components_to_dmatrix(
     dmt: DMatrix,
     templates: Templates,
@@ -302,8 +329,17 @@ def add_spatial_synch_components_to_dmatrix(
         for term, beta_symbol in zip(synch_terms, beta_symbols)
     ]
     template_terms = [
-        sympy.simplify(sum(synch_terms) / len(synch_terms)),
-        sympy.simplify(sum(synch_derivatives) / len(synch_derivatives)),
+        sympy.simplify(sum(synch_terms)),
+        sympy.simplify(sum(synch_derivatives)),
+    ]
+    nu_symbol = sympy.Symbol("nu")
+    synch_funcs = [
+        sympy.lambdify((nu_symbol, beta_symbol), term, "numpy")
+        for term, beta_symbol in zip(synch_terms, beta_symbols)
+    ]
+    derivative_funcs = [
+        sympy.lambdify((nu_symbol, beta_symbol), derivative, "numpy")
+        for derivative, beta_symbol in zip(synch_derivatives, beta_symbols)
     ]
     region_masks = [
         numpy.asarray(region_mask, dtype=numpy.float64)
@@ -321,19 +357,16 @@ def add_spatial_synch_components_to_dmatrix(
         for freq_index, nu_value in enumerate(freqs):
             for region_mask, term, derivative, beta_symbol in zip(
                 region_masks,
-                synch_terms,
-                synch_derivatives,
+                synch_funcs,
+                derivative_funcs,
                 beta_symbols,
             ):
-                substitutions = {
-                    sympy.Symbol("nu"): float(nu_value),
-                    beta_symbol: param_values[beta_symbol.name],
-                }
+                beta_value = param_values[beta_symbol.name]
                 coefficients[freq_index, 0] += (
-                    float(term.subs(substitutions)) * region_mask
+                    float(term(float(nu_value), beta_value)) * region_mask
                 )
                 coefficients[freq_index, 1] += (
-                    float(derivative.subs(substitutions)) * region_mask
+                    float(derivative(float(nu_value), beta_value)) * region_mask
                 )
         return coefficients
 
@@ -898,12 +931,12 @@ def test_fg_with_noise_cov(
         dmp.initialise()
         return dmp
 
-    use_spatial_synch_regions = (
-        synch_region_masks is not None
-        and issynch
-        and not isdust
-        and not uni
-        and order == 1
+    use_spatial_synch_regions = use_spatial_synch_region_coefficients(
+        synch_region_masks,
+        isdust=isdust,
+        issynch=issynch,
+        uni=uni,
+        order=order,
     )
 
     dmt = DMatrix()
@@ -1095,12 +1128,12 @@ def test_fg_with_noise_cov_xref(
         dmp.initialise()
         return dmp
 
-    use_spatial_synch_regions = (
-        synch_region_masks is not None
-        and issynch
-        and not isdust
-        and not uni
-        and order == 1
+    use_spatial_synch_regions = use_spatial_synch_region_coefficients(
+        synch_region_masks,
+        isdust=isdust,
+        issynch=issynch,
+        uni=uni,
+        order=order,
     )
 
     dmt = DMatrix()

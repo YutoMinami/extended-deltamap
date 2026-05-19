@@ -41,12 +41,102 @@
     rewrite of the spatial `CalcH_matrix()` reduced Python-loop overhead, but
     the remaining time is dominated by dense Cholesky and `DTNIDc A^{-1}
     DTNIDc^T`; with finite checks disabled on the largest solves, the profile
-    is ~3.37 s/eval. Do not launch multi-seed full fits until either this
-    dense linear algebra cost is acceptable or a cheaper staged test is chosen.
+    was ~3.37 s/eval. Removing the unused `DT_SpNI_D` / `DT_SpNI_DL` build from
+    current likelihood evaluations reduced the nside=8 profile to ~2.12 s/eval.
+    Do not launch multi-seed full fits until either this dense linear algebra
+    cost is acceptable or a cheaper staged test is chosen.
+    Next direction: reduce optimizer evaluation count rather than chasing
+    small per-evaluation gains. Add nside=8 dust-only and synch-only 2-region
+    configs, run short `migrad_ncall` traces, then use their recovered
+    foreground parameters as stronger initial values for a single combined
+    dust+synch seed before any multi-seed run.
+    Initial seed-8 `migrad_ncall=20` traces are finite but not valid. Synch-only
+    gives plausible values (`r≈0.0135`, `beta_s≈-2.93,-3.14`), while dust-only
+    and combined fits leave several dust parameters at their initial values.
+    This points to dust MBB exploration/initialization rather than an algebraic
+    failure of the spatial coefficient path.
+    Optimizer-loop cleanup: the outer-loop continuation criterion now compares
+    full likelihood values before/after the r-only step rather than comparing
+    `r` shifts. A transient negative `Delta L_r` diagnosis was traced to
+    comparing FG `ReturnChiSquare()` fvals against r-only `ReturnLikelihood()`
+    fvals. With the corrected full-likelihood comparison, Minuit r-only and
+    scalar bounded r-only give nearly identical likelihoods on capped nside=8
+    traces. Keep Minuit as the default r-only optimizer to preserve `r_error`;
+    scalar remains a diagnostic option via `diagnostics.r_minimizer = scalar`.
+    The r-step likelihood threshold now uses `1e-3 * self.size` without a
+    constant floor, so the stopping criterion scales with nside.
+    New hypothesis: the current dust median brightness split is a poor
+    parameter-estimation split because the faint region has too little dust
+    signal to constrain its own `beta_d`/`T_d1`. For later clustering, prefer
+    grouping pixels by SED-like color features, e.g. log polarization-amplitude
+    ratios across frequencies, rather than by brightness alone.
   Step C — k-means clustering with ~5 regions each for synchrotron and dust
     at nside=8. Synchrotron regions from low-frequency polarization maps;
     dust regions from 353 GHz dust-dominated maps. Final region counts and
     shapes are independent between components.
+    Started combined-feature k-means prototype using six standardized features:
+    log synch amplitude, two synch SED ratios, log dust amplitude, and two dust
+    SED ratios. Generated k=4/8/16 masks with
+    `scripts/make_combined_feature_regions.py`; k=4 has healthy counts
+    (79/134/83/132), while k=8 already has a 26-pixel cluster and should wait.
+    Added k=4 combined-feature synch-only and dust+synch trace configs. The
+    synch-only k=4 seed-18 trace loads the masks and expands four `beta_s`
+    parameters successfully, though the short cap is not Minuit-valid.
+    The k=4 combined dust+synch trace is much slower (`nfcn≈214` per FG step)
+    and leaves dust parameters at initial values under `migrad_ncall=20`.
+    Added `save_minuit_matrices` diagnostic output for the final foreground
+    Minuit covariance/correlation; seed-19 shows very strong foreground
+    correlations, so inspect these matrices before increasing k or ncall.
+    Added `scripts/plot_fg_correlation_heatmap.py`; seed-19 heatmap/strong-pair
+    outputs show strong cross-component synch-vs-dust correlations as well as
+    dust beta/T correlations. These cross-component correlations are not only
+    same-region pairs; strong different-region pairs appear too. Therefore,
+    do not jump immediately to separate dust/synch region sets as the fix.
+    First summarize same-region vs different-region cross-component correlations.
+    Tried full uncapped k=4 combined seed 1 for a better correlation matrix;
+    the foreground Minuit did not return after >5h wall time and was killed
+    without outputs. Next use a large finite cap (e.g. `migrad_ncall=200`) or
+    staged/frozen dust parameters rather than true uncapped Minuit.
+    Keep the original `r_init=0.5`; the next comparison should not change the
+    initial condition. Because the outer loop now uses `Delta L_r`, capped
+    coordinate-descent steps may still be preferable. Ran the existing k=4
+    combined trace with `migrad_ncall=20`, seed 20. It stopped after outer 1
+    with `r=0.01126` and produced physically named `num0020_fg_corr.csv`.
+    Strong correlations remain mostly cross-component and different-region
+    (57 strong pairs, 42 cross-component, 30 different-region cross-component),
+    so this does not yet support a simple same-region dust/synch split as the
+    main fix.
+    Visualized the k=4 masks with `scripts/plot_region_mollview.py`. The
+    current feature-space k-means masks are highly non-connected
+    (component counts 5/5/10/15 for regions 0..3). This is acceptable for an
+    MC-NILC-like "same spectral tracer value" clustering, but it is probably
+    not the right final definition for patch-wise parametric foreground
+    parameters. Next clustering prototype should add spherical proximity:
+    build a HEALPix neighbor graph with angular-distance and SED-tracer terms,
+    then apply spectral/agglomerative clustering with connectedness in mind.
+    Added first lightweight spatial-proximity prototype:
+    `scripts/make_spatial_feature_regions.py`. It uses a HEALPix-neighbor graph
+    with angular+SED-ratio edge weights, cuts a minimum spanning tree with a
+    `--min-pixels` guard, and generated connected k=4 masks
+    `spatial_feature_mst_ns8` with counts 56/62/142/168. The SED-ratio means
+    are still very similar across regions, so this is a spatially connected
+    patch prototype rather than a strong SED-shape clustering. Added spatial-k4
+    synch-only and dust+synch trace configs; synch-only seed 21 completed as a
+    mask-loading diagnostic.
+    Ran same-seed dust+synch capped diagnostics for seed 22. Spatial-MST k=4
+    gives `r=0.05192 +/- 0.02969`; combined-feature k=4 gives
+    `r=0.05614 +/- 0.03453`; both are high versus true `r=0.01`, so this does
+    not yet show an `r`-precision benefit. Spatial-MST does remove the very
+    strong foreground-parameter correlations (`|corr|>=0.8`: 0 pairs versus 50
+    for combined-feature), but correlation reduction is secondary. Next compare
+    `r_hat`, `sigma_r`, and normalized pull over multiple seeds and against a
+    no-region/global baseline.
+    Added the no-region baseline
+    `examples/DustSynch_var_9freq_ns8_trace_ncall20.ini` and ran seed 22.
+    Same-seed comparison: global `r=0.05292 +/- 0.03341` (pull 1.285),
+    combined-feature k=4 `r=0.05614 +/- 0.03453` (pull 1.336), spatial-MST k=4
+    `r=0.05192 +/- 0.02969` (pull 1.412). Regionwise does not clearly improve
+    `r` for this seed.
   The region-wise approach is motivated by Nside scaling: more pixels allow
   more regions, and the spatial coefficient path keeps H matrix size fixed
   regardless of region count.

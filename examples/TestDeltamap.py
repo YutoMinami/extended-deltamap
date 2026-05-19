@@ -190,6 +190,32 @@ def write_fit_result_csv(
         writer.writerow(row)
 
 
+def write_matrix_csv(output_path: Path, names: Sequence[str], matrix: numpy.ndarray) -> None:
+    """Write a named square matrix to CSV."""
+    with output_path.open("w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["parameter", *names])
+        for name, row in zip(names, matrix):
+            writer.writerow([name, *row])
+
+
+def write_last_fg_minuit_matrices(output_path: Path, dmp: DeltaMap) -> None:
+    """Write final foreground Minuit covariance and correlation matrices."""
+    minuit = dmp.last_fg_minuit
+    if minuit is None or minuit.covariance is None:
+        return
+    names = list(dmp.last_fg_parameter_names) or list(minuit.parameters)
+    covariance = numpy.array(minuit.covariance, dtype=float)
+    errors = numpy.sqrt(numpy.diag(covariance))
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+        correlation = covariance / numpy.outer(errors, errors)
+    correlation[~numpy.isfinite(correlation)] = numpy.nan
+
+    stem = output_path.with_suffix("")
+    write_matrix_csv(stem.with_name(f"{stem.name}_fg_cov.csv"), names, covariance)
+    write_matrix_csv(stem.with_name(f"{stem.name}_fg_corr.csv"), names, correlation)
+
+
 def run_likelihood_profile(dmp: DeltaMap, repeats: int) -> float:
     """Time repeated likelihood evaluations for the current setup."""
     if repeats < 1:
@@ -1680,6 +1706,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except (configparser.NoOptionError, ValueError):
         pass
+    try:
+        dmp.r_minimizer = get_config_value(
+            fit_parser,
+            ("diagnostics", "r_minimizer"),
+            ("fit", "r_minimizer"),
+            ("par", "r_minimizer"),
+        )
+    except configparser.NoOptionError:
+        pass
+    save_minuit_matrices = False
+    try:
+        save_minuit_matrices = get_bool_value(
+            fit_parser,
+            ("diagnostics", "save_minuit_matrices"),
+            ("fit", "save_minuit_matrices"),
+            ("par", "save_minuit_matrices"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
 
     profile_only = False
     try:
@@ -1756,6 +1801,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         param_values=dmp.param_values,
         param_errors=dmp.param_errors,
     )
+    if save_minuit_matrices:
+        write_last_fg_minuit_matrices(oname, dmp)
 
     return 0
 

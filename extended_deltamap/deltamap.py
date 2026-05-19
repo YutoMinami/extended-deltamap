@@ -1,11 +1,13 @@
 import time
 import sys
+from types import SimpleNamespace
 
 import numpy
 import scipy
 import sympy
 from iminuit import Minuit
 from scipy.linalg import lapack
+from scipy.optimize import minimize_scalar
 
 
 class DeltaMap:
@@ -88,6 +90,9 @@ class DeltaMap:
         self.minuit_trace = False
         self.internal_timing = False
         self.r_verbose = False
+        self.r_minimizer = "minuit"
+        self.last_fg_minuit = None
+        self.last_fg_parameter_names = []
 
     def _is_r_parameter(self, param):
         """Return True only for the tensor-to-scalar ratio parameter."""
@@ -557,13 +562,6 @@ class DeltaMap:
             matrix_list.append(i_list)
         self.DTNIDc = numpy.block(matrix_list)
 
-        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve(
-            (self.AL, True),
-            self.DTNIDc.T,
-            check_finite=False,
-        )
-        self.DT_SpNI_DL = self.stable_cholesky(DT_SpNI_D, lower=True)
-
         # def CalcDTNIM(self):
         matrix_list = []
         for i in range(self.dmtrx.D_matrix.shape[1]):
@@ -653,18 +651,6 @@ class DeltaMap:
         )
         self.DTNIDc = DTNIDc_blocks.reshape(n_columns * size, size)
         record_timing("build_DTNIDc", start)
-
-        start = time.perf_counter()
-        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve(
-            (self.AL, True),
-            self.DTNIDc.T,
-            check_finite=False,
-        )
-        record_timing("build_DT_SpNI_D", start)
-
-        start = time.perf_counter()
-        self.DT_SpNI_DL = self.stable_cholesky(DT_SpNI_D, lower=True)
-        record_timing("cholesky_DT_SpNI_D", start)
 
         start = time.perf_counter()
         meanvec_stack = numpy.stack([m.ravel() for m in self.meanvec])
@@ -1458,17 +1444,14 @@ class DeltaMap:
         Returns:
             A tuple of best-fit parameter values and their current errors.
         """
-        # tmp_r = self.inits['r'][0]
         self.lh = 1.0e10
-        tmp_r = 100
-        pre_lh = numpy.inf
-        pre_r = numpy.inf
+        tmp_r = self.param_values.get("r", self.inits["r"][0])
+        r_step_lh_tol = 1.0e-3 * self.size
         count = 0
         self.param_errors = {}
         for key in self.inits.keys():
             self.param_errors[key] = (self.inits[key][1][1] - self.inits[key][1][0]) / 2.0
-        # while( abs(tmp_r - pre_r) > 1.0e-10 ):
-        while ((pre_lh - self.lh) > 1.0e-2) or abs(pre_r - tmp_r) > 1.0e-5:
+        while True:
             # fit without r
             self.fg_valid = False
             while not self.fg_valid:
@@ -1483,27 +1466,47 @@ class DeltaMap:
                     self.param_values[param.name] = fparam[pcount]["value"]
                     self.param_errors[param.name] = fparam[pcount]["error"]
                     pcount += 1
+            lh_after_fg = self.ReturnLikelihood()
             if self.verbose:
                 print(self.inits)
             self.r_valid = False
+            previous_r = self.param_values["r"]
+            previous_r_error = self.param_errors["r"]
             while not self.r_valid:
                 fmin, fparam = self.ReturnMinimize(True, True)
                 break
-            self.param_values["r"] = fparam[0]["value"]
-            self.param_errors["r"] = fparam[0]["error"]
+            lh_after_r = fmin.fval
             pre_r = tmp_r
-            tmp_r = fparam[0]["value"]
+            proposed_r = fparam[0]["value"]
+            proposed_r_error = fparam[0]["error"]
             # self.r_minos = fparam[0]['merror']
+            delta_lh_r_step = lh_after_fg - lh_after_r
+            r_step_accepted = delta_lh_r_step >= 0.0
+            if r_step_accepted:
+                self.param_values["r"] = proposed_r
+                self.param_errors["r"] = proposed_r_error
+                tmp_r = proposed_r
+                self.lh = lh_after_r
+            else:
+                self.param_values["r"] = previous_r
+                self.param_errors["r"] = previous_r_error
+                tmp_r = previous_r
+                self.lh = lh_after_fg
             if self.verbose:
                 print(self.param_values)
-            # pre_r = tmp_r
-            pre_lh = self.lh
-            # tmp_r = self.inits['r'][0]
-            # tmp_r = self.param_values['r']
-            # tmp_lh = self.MinimizeOnlyR([ self.param_values['r'] ])
-            self.lh = fmin.fval
+            if self.minuit_trace:
+                delta_r = abs(pre_r - proposed_r)
+                print(
+                    "outer iteration "
+                    f"count={count} r={proposed_r:.8e} delta_r={delta_r:.8e} "
+                    f"delta_lh_r_step={delta_lh_r_step:.8e} "
+                    f"accepted={r_step_accepted} tol={r_step_lh_tol:.8e} "
+                    f"continue={delta_lh_r_step > r_step_lh_tol}"
+                )
             if self.r_verbose:
                 print(self.lh, tmp_r)
+            if delta_lh_r_step <= r_step_lh_tol:
+                break
             if count >= 20:
                 print("iteration over 20")
                 break
@@ -1550,9 +1553,33 @@ class DeltaMap:
 				parameter_initial.append(self.inits[symbol.name])
 				limits.append(limit)
 				err_params.append(0.5)
-		"""
+        """
         if self.verbose:
             print(parameter_initial, limits)
+        if isfit_r and isonly_r and self.r_minimizer not in ("minuit", "scalar"):
+            raise ValueError(f"Unsupported r_minimizer: {self.r_minimizer}")
+        if isfit_r and isonly_r and self.r_minimizer == "scalar":
+            r_lo, r_hi = limits[0]
+            options = {"xatol": 1.0e-6}
+            if self.migrad_ncall is not None:
+                options["maxiter"] = self.migrad_ncall
+            result = minimize_scalar(
+                self.MinimizeOnlyRScalar,
+                bounds=(r_lo, r_hi),
+                method="bounded",
+                options=options,
+            )
+            fmin = SimpleNamespace(fval=float(result.fun), nfcn=result.nfev)
+            if self.minuit_trace:
+                print(
+                    "scalar r step isfit_r=True isonly_r=True "
+                    f"nfcn={result.nfev} valid={result.success} fval={float(result.fun):.8e}"
+                )
+            if self.r_verbose:
+                print(result.x, result.fun)
+            self.r_valid = bool(result.success)
+            return fmin, [{"value": float(result.x), "error": numpy.nan}]
+
         if isfit_r:
             if not isonly_r:
                 self.m = Minuit(self.MinimizeWithR, parameter_initial)
@@ -1560,7 +1587,6 @@ class DeltaMap:
                 self.m.errordef = 1
                 self.m.print_level = 0
                 self.m.strategy = 2
-
             else:
                 self.m = Minuit(self.MinimizeOnlyR, parameter_initial)
                 self.m.limits = limits
@@ -1588,6 +1614,10 @@ class DeltaMap:
             for p in self.m.params:
                 fparam.append({"value": p.value, "error": p.error})
             self.fg_valid = self.m.valid
+            self.last_fg_minuit = self.m
+            self.last_fg_parameter_names = [
+                param.name for param in self.params if not self._is_r_parameter(param)
+            ]
             return fmin, fparam
         else:
             """
@@ -1642,6 +1672,11 @@ class DeltaMap:
 			self.m.minos()
 		self.r_valid = self.m.valid
 		"""
+
+    def MinimizeOnlyRScalar(self, r):
+        """Objective wrapper for scalar bounded optimization of ``r``."""
+        self.param_values["r"] = r
+        return self.ReturnLikelihood()
 
     def MinimizeOnlyR(self, params):
         """Objective wrapper for optimizing only the ``r`` parameter.

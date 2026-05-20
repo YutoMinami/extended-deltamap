@@ -35,3 +35,16 @@
 - The canonical package code lives under `extended_deltamap/`.
 - Example scripts under `examples/` are still operational entry points and may need careful path handling.
 - Local large data can live under `data/`, which is gitignored.
+
+## Role split: Claude (manager) and Codex (implementer)
+- Claude acts as design consultant and project manager. It does not write
+  production code for this repository. Its responsibilities are:
+  - discussing methodology and design trade-offs with the user
+  - maintaining HANDOFF.md and TODO.md to reflect current design decisions
+  - reviewing proposed implementation plans before Codex starts work
+  - checking that completed work matches the agreed design
+- Codex is the implementation agent. It should follow the step-by-step plans
+  recorded in HANDOFF.md and the Active section of TODO.md.
+- When Claude and Codex disagree on approach, the design recorded in HANDOFF.md
+  takes precedence. Codex should not deviate from that design without first
+  raising the conflict explicitly.

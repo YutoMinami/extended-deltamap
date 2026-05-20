@@ -1,10 +1,13 @@
 import time
+import sys
+from types import SimpleNamespace
 
 import numpy
 import scipy
 import sympy
 from iminuit import Minuit
 from scipy.linalg import lapack
+from scipy.optimize import minimize_scalar
 
 
 class DeltaMap:
@@ -81,8 +84,19 @@ class DeltaMap:
         self.is_noise_matrix = False
         self.is_noise_set = False
         self.inds_cache = {}
+        self._NI_stack = None
         self.migrad = True
+        self.migrad_ncall = None
+        self.minuit_trace = False
+        self.internal_timing = False
         self.r_verbose = False
+        self.r_minimizer = "minuit"
+        self.last_fg_minuit = None
+        self.last_fg_parameter_names = []
+
+    def _is_r_parameter(self, param):
+        """Return True only for the tensor-to-scalar ratio parameter."""
+        return param.name == "r"
 
     def SetxRPrior(self, meanxR, sigmaxR):
         """Store a Gaussian prior on the dust ``x^R`` parameter.
@@ -128,7 +142,7 @@ class DeltaMap:
         """Differentiate the symbolic D matrix with respect to non-``r`` parameters."""
         self.DiffDs = []
         for param in self.params:
-            if "r" in param.name:
+            if self._is_r_parameter(param):
                 continue
             else:
                 self.DiffDs.append(sympy.simplify(sympy.diff(self.dmtrx.D_matrix, param)))
@@ -211,6 +225,7 @@ class DeltaMap:
             for i in self.N_inv_array:
                 # self.NI_list.append(i * sympy.eye(self.size) )
                 self.NI_list.append(i * numpy.identity(self.size))
+        self._NI_stack = numpy.stack(self.NI_list)
 
     # def SetParameterInitial(self, names, inits, limits=None):
     def SetParameterInitial(self, inits):
@@ -505,19 +520,30 @@ class DeltaMap:
             if self.verbose:
                 print(str(param) + ": ", self.param_values[param.name])
         D = sympy.matrix2numpy(D, dtype=numpy.float64)
+        spatial_coefficients = self._spatial_coefficients(D)
+        if spatial_coefficients is not None:
+            self._calc_h_matrix_from_spatial_coefficients(spatial_coefficients)
+            return
+
+        column_masks = self._column_masks(D.shape[1])
         matrix_list = []
         for i in range(self.dmtrx.D_matrix.shape[1]):
             i_list = []
             for j in range(self.dmtrx.D_matrix.shape[1]):
                 element = numpy.zeros_like(self.NI_list[0])
                 for k in range(len(self.NI_list)):
-                    element += D[k, i] * self.NI_list[k] * D[k, j]
+                    masked_ni = self._masked_noise_block(
+                        self.NI_list[k],
+                        row_mask=column_masks[i],
+                        column_mask=column_masks[j],
+                    )
+                    element += D[k, i] * masked_ni * D[k, j]
                 i_list.append(element)
 
             matrix_list.append(i_list)
 
         DTNID = numpy.block(matrix_list)
-        self.DNIDL = scipy.linalg.cholesky(DTNID, lower=True)
+        self.DNIDL = self.stable_cholesky(DTNID, lower=True)
 
         # self.H = (NI@D) @ ( scipy.linalg.cho_solve((self.DNIDL, True) , D.T @ NI) )
 
@@ -527,13 +553,14 @@ class DeltaMap:
             i_list = []
             element = numpy.zeros_like(self.NI_list[0])
             for j in range(len(self.NI_list)):
-                element += D[j, i] * self.NI_list[j]
+                masked_ni = self._masked_noise_block(
+                    self.NI_list[j],
+                    row_mask=column_masks[i],
+                )
+                element += D[j, i] * masked_ni
             i_list.append(element)
             matrix_list.append(i_list)
         self.DTNIDc = numpy.block(matrix_list)
-
-        DT_SpNI_D = DTNID - self.DTNIDc @ scipy.linalg.cho_solve((self.AL, True), self.DTNIDc.T)
-        self.DT_SpNI_DL = scipy.linalg.cholesky(DT_SpNI_D, lower=True)
 
         # def CalcDTNIM(self):
         matrix_list = []
@@ -543,14 +570,148 @@ class DeltaMap:
             # element = numpy.zeros_like(self.NI_list[0])
             element = numpy.zeros_like(self.meanvec[0])
             for j in range(len(self.NI_list)):
-                element += D[j, i] * (self.NI_list[j] @ self.meanvec[j])
+                masked_ni = self._masked_noise_block(
+                    self.NI_list[j],
+                    row_mask=column_masks[i],
+                )
+                element += D[j, i] * (masked_ni @ self.meanvec[j])
             i_list.append(element)
             matrix_list.append(i_list)
         self.DTNIM = numpy.block(matrix_list)
 
+    def _spatial_coefficients(self, scalar_d_matrix):
+        """Return optional pixel-dependent D coefficients for each column."""
+        builder = getattr(self.dmtrx, "spatial_coefficient_builder", None)
+        if builder is None:
+            return None
+        coefficients = numpy.asarray(
+            builder(self.dmtrx.freqs, self.param_values, self.size),
+            dtype=numpy.float64,
+        )
+        expected_shape = (
+            len(self.NI_list),
+            scalar_d_matrix.shape[1],
+            self.NI_list[0].shape[0],
+        )
+        if coefficients.shape != expected_shape:
+            raise ValueError(
+                "Spatial coefficient shape must be "
+                f"{expected_shape}, got {coefficients.shape}"
+            )
+        return coefficients
+
+    def _calc_h_matrix_from_spatial_coefficients(self, coefficients):
+        """Build H-matrix terms from pixel-dependent D coefficients."""
+        timings = []
+
+        def record_timing(name, start):
+            timings.append((name, time.perf_counter() - start))
+
+        n_columns = coefficients.shape[1]
+        size = coefficients.shape[2]
+        NI_stack = self._NI_stack
+        if NI_stack is None:
+            start = time.perf_counter()
+            NI_stack = numpy.stack(self.NI_list)
+            self._NI_stack = NI_stack
+            record_timing("stack_NI_list", start)
+
+        start = time.perf_counter()
+        DTNID_blocks = numpy.empty(
+            (n_columns, n_columns, size, size),
+            dtype=numpy.float64,
+        )
+        for i in range(n_columns):
+            weighted_noise = coefficients[:, i, :, None] * NI_stack
+            DTNID_blocks[i] = numpy.einsum(
+                "kpq,kjq->jpq",
+                weighted_noise,
+                coefficients,
+                optimize=True,
+            )
+        record_timing("build_DTNID_blocks", start)
+
+        start = time.perf_counter()
+        DTNID = DTNID_blocks.transpose(0, 2, 1, 3).reshape(
+            n_columns * size,
+            n_columns * size,
+        )
+        record_timing("reshape_DTNID", start)
+
+        start = time.perf_counter()
+        self.DNIDL = self.stable_cholesky(DTNID, lower=True)
+        record_timing("cholesky_DTNID", start)
+
+        start = time.perf_counter()
+        DTNIDc_blocks = numpy.einsum(
+            "kip,kpq->ipq",
+            coefficients,
+            NI_stack,
+            optimize=True,
+        )
+        self.DTNIDc = DTNIDc_blocks.reshape(n_columns * size, size)
+        record_timing("build_DTNIDc", start)
+
+        start = time.perf_counter()
+        meanvec_stack = numpy.stack([m.ravel() for m in self.meanvec])
+        NIM_stack = numpy.einsum(
+            "kpq,kq->kp",
+            NI_stack,
+            meanvec_stack,
+            optimize=True,
+        )
+        DTNIM_flat = numpy.einsum(
+            "kip,kp->ip",
+            coefficients,
+            NIM_stack,
+            optimize=True,
+        )
+        self.DTNIM = DTNIM_flat.reshape(n_columns * size, 1)
+        record_timing("build_DTNIM", start)
+        if self.internal_timing:
+            timing_text = ", ".join(f"{name}={elapsed:.6f}s" for name, elapsed in timings)
+            print(f"timing spatial CalcH_matrix detail: {timing_text}")
+
+    def _column_masks(self, n_columns):
+        """Return D-matrix column masks, defaulting to the unmasked path."""
+        column_masks = getattr(self.dmtrx, "column_masks", None)
+        if not column_masks:
+            return [None] * n_columns
+        if len(column_masks) != n_columns:
+            raise ValueError(
+                "DMatrix column mask count must match D-matrix column count: "
+                f"{len(column_masks)} != {n_columns}"
+            )
+        return column_masks
+
+    def _masked_noise_block(self, noise_block, row_mask=None, column_mask=None):
+        """Apply optional row/column region masks to one noise-inverse block."""
+        masked_block = noise_block
+        if row_mask is not None:
+            row_mask = self._validate_noise_mask(row_mask, noise_block.shape[0])
+            masked_block = row_mask[:, None] * masked_block
+        if column_mask is not None:
+            column_mask = self._validate_noise_mask(column_mask, noise_block.shape[1])
+            masked_block = masked_block * column_mask[None, :]
+        return masked_block
+
+    def _validate_noise_mask(self, mask, expected_size):
+        """Return a numeric mask vector after checking its length."""
+        mask = numpy.asarray(mask, dtype=numpy.float64)
+        if mask.shape != (expected_size,):
+            raise ValueError(
+                "Region mask length must match noise block size: "
+                f"{mask.shape} != ({expected_size},)"
+            )
+        return mask
+
     def CalcDTNID_I_DTNIM(self):
         """Solve the projected normal equations for the mean-vector term."""
-        self.DTNID_I_DTNIM = scipy.linalg.cho_solve((self.DNIDL, True), self.DTNIM)
+        self.DTNID_I_DTNIM = scipy.linalg.cho_solve(
+            (self.DNIDL, True),
+            self.DTNIM,
+            check_finite=False,
+        )
 
     def CalcDcTNID_DTNID_I_DTNIM(self):
         """Project the solved mean-vector term back to pixel space."""
@@ -558,11 +719,19 @@ class DeltaMap:
 
     def CalcBIDcTNID_DTNID_I_DTNIM(self):
         """Apply the inverse ``B`` operator to the projected mean-vector term."""
-        self.BIDcTNID_DTNID_I_DTNIM = scipy.linalg.cho_solve((self.BL, True), self.DcTNID_DTNID_I_DTNIM)
+        self.BIDcTNID_DTNID_I_DTNIM = scipy.linalg.cho_solve(
+            (self.BL, True),
+            self.DcTNID_DTNID_I_DTNIM,
+            check_finite=False,
+        )
 
     def CalcDelta(self):
         """Compute the scalar or matrix-valued ``Delta`` term from projected noise blocks."""
-        self.Delta = self.DTNIDc.T @ scipy.linalg.cho_solve((self.DNIDL, True), self.DTNIDc)
+        self.Delta = self.DTNIDc.T @ scipy.linalg.cho_solve(
+            (self.DNIDL, True),
+            self.DTNIDc,
+            check_finite=False,
+        )
 
     def CalcH(self):
         """Construct the H operator for the diagonal-noise approximation."""
@@ -746,9 +915,9 @@ class DeltaMap:
         # self.BL = scipy.linalg.cholesky(self.B)
         # self.BLU, self.BP = scipy.linalg.lu_factor(self.B.T @ self.B)
         self.BLU, self.BP = scipy.linalg.lu_factor(self.B)
-        self.BL = scipy.linalg.cholesky(-self.B, True)
+        self.BL = self.stable_cholesky(-self.B, True)
         if not self.is_noise_matrix:
-            self.BpDL = scipy.linalg.cholesky(-self.BpD, True)
+            self.BpDL = self.stable_cholesky(-self.BpD, True)
             ##TODO###
             self.BpDLU, self.BpDP = scipy.linalg.lu_factor(self.BpD)
             # self.BpDLU, self.BpDP = scipy.linalg.lu_factor(self.BpD.T @ self.BpD)
@@ -1150,10 +1319,11 @@ class DeltaMap:
 
     def ReturnlnDNID(self):
         """Return the log-determinant contribution from the ``D^T N^{-1} D`` term."""
-        sign, det = numpy.linalg.slogdet(self.DNIDL)
-        # return 2*sign*det*self.size
-        # return 2*det*self.size
-        return 2 * det
+        diagonal = numpy.diag(self.DNIDL)
+        if numpy.any(diagonal <= 0.0):
+            self.valid = False
+            return numpy.inf
+        return 2.0 * numpy.log(diagonal).sum()
         # sign,det = numpy.linalg.slogdet(self.DNIDLU)
         # return sign*det*self.size
 
@@ -1220,11 +1390,21 @@ class DeltaMap:
 
         # lnAI =self.ReturnlnAI()
 
+        timings = []
+        start = time.perf_counter()
         nume = self.ReturnChiSquare()
+        timings.append(("ReturnChiSquare", time.perf_counter() - start))
+
+        start = time.perf_counter()
         lnS0 = self.ReturnlnS0()
+        timings.append(("ReturnlnS0", time.perf_counter() - start))
         denomi = 0.0
+        start = time.perf_counter()
         lnB = self.ReturnlnB()
+        timings.append(("ReturnlnB", time.perf_counter() - start))
+        start = time.perf_counter()
         lnDNID = self.ReturnlnDNID()
+        timings.append(("ReturnlnDNID", time.perf_counter() - start))
         """
 		if self.is_noise_matrix:
 			lnAI = self.ReturnlnAI()
@@ -1252,6 +1432,10 @@ class DeltaMap:
         # return mNIAINIm + lnS + mNm +  MHM + MHBIHM +lnB+lnAI + lnDNID
         # return mNIAINIm + lnS0 + mNm +  MHM + MHBIHM +lnB + lnDNID
         # return mNIAINIm + lnS0 + mNm +  MHM + MHBIHM - lnAI
+        if self.internal_timing:
+            total = sum(elapsed for _, elapsed in timings)
+            timing_text = ", ".join(f"{name}={elapsed:.6f}s" for name, elapsed in timings)
+            print(f"timing ReturnLikelihood: {timing_text}, measured_total={total:.6f}s")
         return denomi + nume
 
     def IterateMinimize(self):
@@ -1260,17 +1444,14 @@ class DeltaMap:
         Returns:
             A tuple of best-fit parameter values and their current errors.
         """
-        # tmp_r = self.inits['r'][0]
         self.lh = 1.0e10
-        tmp_r = 100
-        pre_lh = numpy.inf
-        pre_r = numpy.inf
+        tmp_r = self.param_values.get("r", self.inits["r"][0])
+        r_step_lh_tol = 1.0e-3 * self.size
         count = 0
         self.param_errors = {}
         for key in self.inits.keys():
             self.param_errors[key] = (self.inits[key][1][1] - self.inits[key][1][0]) / 2.0
-        # while( abs(tmp_r - pre_r) > 1.0e-10 ):
-        while ((pre_lh - self.lh) > 1.0e-2) or abs(pre_r - tmp_r) > 1.0e-5:
+        while True:
             # fit without r
             self.fg_valid = False
             while not self.fg_valid:
@@ -1278,34 +1459,54 @@ class DeltaMap:
                 break
             pcount = 0
             for param in self.params:
-                if "r" in param.name:
+                if self._is_r_parameter(param):
                     continue
                 else:
                     # self.inits[param.name][0] = fparam[pcount]['value']
                     self.param_values[param.name] = fparam[pcount]["value"]
                     self.param_errors[param.name] = fparam[pcount]["error"]
                     pcount += 1
+            lh_after_fg = self.ReturnLikelihood()
             if self.verbose:
                 print(self.inits)
             self.r_valid = False
+            previous_r = self.param_values["r"]
+            previous_r_error = self.param_errors["r"]
             while not self.r_valid:
                 fmin, fparam = self.ReturnMinimize(True, True)
                 break
-            self.param_values["r"] = fparam[0]["value"]
-            self.param_errors["r"] = fparam[0]["error"]
+            lh_after_r = fmin.fval
             pre_r = tmp_r
-            tmp_r = fparam[0]["value"]
+            proposed_r = fparam[0]["value"]
+            proposed_r_error = fparam[0]["error"]
             # self.r_minos = fparam[0]['merror']
+            delta_lh_r_step = lh_after_fg - lh_after_r
+            r_step_accepted = delta_lh_r_step >= 0.0
+            if r_step_accepted:
+                self.param_values["r"] = proposed_r
+                self.param_errors["r"] = proposed_r_error
+                tmp_r = proposed_r
+                self.lh = lh_after_r
+            else:
+                self.param_values["r"] = previous_r
+                self.param_errors["r"] = previous_r_error
+                tmp_r = previous_r
+                self.lh = lh_after_fg
             if self.verbose:
                 print(self.param_values)
-            # pre_r = tmp_r
-            pre_lh = self.lh
-            # tmp_r = self.inits['r'][0]
-            # tmp_r = self.param_values['r']
-            # tmp_lh = self.MinimizeOnlyR([ self.param_values['r'] ])
-            self.lh = fmin.fval
+            if self.minuit_trace:
+                delta_r = abs(pre_r - proposed_r)
+                print(
+                    "outer iteration "
+                    f"count={count} r={proposed_r:.8e} delta_r={delta_r:.8e} "
+                    f"delta_lh_r_step={delta_lh_r_step:.8e} "
+                    f"accepted={r_step_accepted} tol={r_step_lh_tol:.8e} "
+                    f"continue={delta_lh_r_step > r_step_lh_tol}"
+                )
             if self.r_verbose:
                 print(self.lh, tmp_r)
+            if delta_lh_r_step <= r_step_lh_tol:
+                break
             if count >= 20:
                 print("iteration over 20")
                 break
@@ -1327,7 +1528,7 @@ class DeltaMap:
         limits = []
         err_params = []
         for param in self.params:
-            if "r" in param.name:
+            if self._is_r_parameter(param):
                 if not isfit_r:
                     continue
                 else:
@@ -1352,9 +1553,33 @@ class DeltaMap:
 				parameter_initial.append(self.inits[symbol.name])
 				limits.append(limit)
 				err_params.append(0.5)
-		"""
+        """
         if self.verbose:
             print(parameter_initial, limits)
+        if isfit_r and isonly_r and self.r_minimizer not in ("minuit", "scalar"):
+            raise ValueError(f"Unsupported r_minimizer: {self.r_minimizer}")
+        if isfit_r and isonly_r and self.r_minimizer == "scalar":
+            r_lo, r_hi = limits[0]
+            options = {"xatol": 1.0e-6}
+            if self.migrad_ncall is not None:
+                options["maxiter"] = self.migrad_ncall
+            result = minimize_scalar(
+                self.MinimizeOnlyRScalar,
+                bounds=(r_lo, r_hi),
+                method="bounded",
+                options=options,
+            )
+            fmin = SimpleNamespace(fval=float(result.fun), nfcn=result.nfev)
+            if self.minuit_trace:
+                print(
+                    "scalar r step isfit_r=True isonly_r=True "
+                    f"nfcn={result.nfev} valid={result.success} fval={float(result.fun):.8e}"
+                )
+            if self.r_verbose:
+                print(result.x, result.fun)
+            self.r_valid = bool(result.success)
+            return fmin, [{"value": float(result.x), "error": numpy.nan}]
+
         if isfit_r:
             if not isonly_r:
                 self.m = Minuit(self.MinimizeWithR, parameter_initial)
@@ -1362,7 +1587,6 @@ class DeltaMap:
                 self.m.errordef = 1
                 self.m.print_level = 0
                 self.m.strategy = 2
-
             else:
                 self.m = Minuit(self.MinimizeOnlyR, parameter_initial)
                 self.m.limits = limits
@@ -1378,13 +1602,22 @@ class DeltaMap:
             self.m.strategy = 2
 
         if not isfit_r:
-            self.m.migrad()
+            self.m.migrad(ncall=self.migrad_ncall)
             fmin = self.m.fmin
+            if self.minuit_trace:
+                print(
+                    "minuit step isfit_r=False isonly_r=False "
+                    f"nfcn={fmin.nfcn} valid={self.m.valid} fval={fmin.fval:.8e}"
+                )
             fparam = []
             # for value,error in zip(self.m.values, self.m.errors):
             for p in self.m.params:
                 fparam.append({"value": p.value, "error": p.error})
             self.fg_valid = self.m.valid
+            self.last_fg_minuit = self.m
+            self.last_fg_parameter_names = [
+                param.name for param in self.params if not self._is_r_parameter(param)
+            ]
             return fmin, fparam
         else:
             """
@@ -1395,8 +1628,13 @@ class DeltaMap:
             if isfit_r and not self.migrad:
                 self.m.scipy()
             else:
-                self.m.migrad()
+                self.m.migrad(ncall=self.migrad_ncall)
             fmin = self.m.fmin
+            if self.minuit_trace:
+                print(
+                    f"minuit step isfit_r={isfit_r} isonly_r={isonly_r} "
+                    f"nfcn={fmin.nfcn} valid={self.m.valid} fval={fmin.fval:.8e}"
+                )
             if self.r_verbose:
                 print(self.m.params[0].value, self.m.fmin.fval)
             self.r_valid = self.m.valid
@@ -1435,6 +1673,11 @@ class DeltaMap:
 		self.r_valid = self.m.valid
 		"""
 
+    def MinimizeOnlyRScalar(self, r):
+        """Objective wrapper for scalar bounded optimization of ``r``."""
+        self.param_values["r"] = r
+        return self.ReturnLikelihood()
+
     def MinimizeOnlyR(self, params):
         """Objective wrapper for optimizing only the ``r`` parameter.
 
@@ -1445,7 +1688,7 @@ class DeltaMap:
             The current likelihood value.
         """
         for idx, param in enumerate(self.params):
-            if "r" not in param.name:
+            if not self._is_r_parameter(param):
                 pass
                 # self.param_values[param.name] = self.inits[param.name][0]
             else:
@@ -1464,7 +1707,7 @@ class DeltaMap:
         count = 0
         ##TODO##
         for idx, param in enumerate(self.params):
-            if "r" in param.name:
+            if self._is_r_parameter(param):
                 pass
                 # self.param_values[param.name] = self.inits[param.name][0]
             else:
@@ -1518,37 +1761,49 @@ class DeltaMap:
         Returns:
             ``True`` when all intermediate calculations succeed, otherwise ``False``.
         """
+        timings = []
+
+        def timed_step(name, func):
+            start = time.perf_counter()
+            result = func()
+            timings.append((name, time.perf_counter() - start))
+            return result
+
         self.valid = True
         # self.CalcTmpVec()
         # self.CalcNIm()#TODO
-        self.CalcCMB0Inverse()
+        timed_step("CalcCMB0Inverse", self.CalcCMB0Inverse)
         if not self.valid:
             return False
-        self.CalcA()
+        timed_step("CalcA", self.CalcA)
         if not self.valid:
             return False
-        self.CalcAI_NIm()
-        self.CalcMeanVec()
+        timed_step("CalcAI_NIm", self.CalcAI_NIm)
+        timed_step("CalcMeanVec", self.CalcMeanVec)
         if self.is_noise_matrix:
-            self.CalcH_matrix()
+            timed_step("CalcH_matrix", self.CalcH_matrix)
             # self.CalcDTNIDc()
             # self.CalcDTNIM()
-            self.CalcDTNID_I_DTNIM()
-            self.CalcDcTNID_DTNID_I_DTNIM()
-            self.CalcDelta()
+            timed_step("CalcDTNID_I_DTNIM", self.CalcDTNID_I_DTNIM)
+            timed_step("CalcDcTNID_DTNID_I_DTNIM", self.CalcDcTNID_DTNID_I_DTNIM)
+            timed_step("CalcDelta", self.CalcDelta)
 
         else:
-            self.CalcH()
+            timed_step("CalcH", self.CalcH)
         if not self.valid:
             return False
 
-        self.CalcB()
+        timed_step("CalcB", self.CalcB)
         if not self.valid:
             return False
         # self.CalcAm()
         # self.CalcMiddle()
         if self.is_noise_matrix:
-            self.CalcBIDcTNID_DTNID_I_DTNIM()
+            timed_step("CalcBIDcTNID_DTNID_I_DTNIM", self.CalcBIDcTNID_DTNID_I_DTNIM)
+        if self.internal_timing:
+            total = sum(elapsed for _, elapsed in timings)
+            timing_text = ", ".join(f"{name}={elapsed:.6f}s" for name, elapsed in timings)
+            print(f"timing CalcInOneLoop: {timing_text}, measured_total={total:.6f}s")
         return True
 
     def is_pos_def(self, A):
@@ -1605,6 +1860,33 @@ class DeltaMap:
             raise ValueError("dpotri failed on input {}".format(cholesky))
         self.upper_triangular_to_symmetric(inv)
         return inv
+
+    def stable_cholesky(self, matrix, lower=True, initial_jitter=1.0e-12, max_tries=8):
+        """Return a Cholesky factor, adding a small diagonal jitter when needed.
+
+        This is mainly used for numerically fragile second-order Delta-map
+        blocks, where the matrix should be positive definite in theory but may
+        pick up tiny negative eigenvalues from round-off.
+        """
+        sym_matrix = 0.5 * (matrix + matrix.T)
+        diag_scale = max(1.0, float(numpy.max(numpy.abs(numpy.diag(sym_matrix)))))
+        jitter = 0.0
+        for _ in range(max_tries):
+            try:
+                if jitter == 0.0:
+                    return scipy.linalg.cholesky(
+                        sym_matrix,
+                        lower=lower,
+                        check_finite=False,
+                    )
+                return scipy.linalg.cholesky(
+                    sym_matrix + numpy.eye(sym_matrix.shape[0]) * jitter,
+                    lower=lower,
+                    check_finite=False,
+                )
+            except numpy.linalg.LinAlgError:
+                jitter = initial_jitter * diag_scale if jitter == 0.0 else jitter * 10.0
+        raise numpy.linalg.LinAlgError("Matrix remained non-positive-definite after jittered Cholesky attempts.")
 
 
 def main():

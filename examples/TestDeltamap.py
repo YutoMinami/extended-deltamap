@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import os
 
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -7,6 +8,7 @@ import argparse
 import configparser
 import importlib.resources
 import sys
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -17,7 +19,14 @@ import scipy.constants.constants as constants
 import sympy
 from iminuit import Minuit
 
-from extended_deltamap import Covariance, DeltaMap, DMatrix, Templates
+from extended_deltamap import (
+    Covariance,
+    DeltaMap,
+    DMatrix,
+    Templates,
+    expand_to_qu,
+    validate_region_masks,
+)
 
 FloatArray = npt.NDArray[numpy.float64]
 
@@ -28,6 +37,210 @@ class SafeDict(dict[str, Any]):
     def __missing__(self, key: str) -> str:
         """Return the original placeholder text for unknown format keys."""
         return "{" + key + "}"
+
+
+def get_config_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> str:
+    """Read the first available config entry from a list of section/key pairs."""
+    for section, option in candidates:
+        if parser.has_option(section, option):
+            return parser.get(section, option)
+    joined = ", ".join(f"[{section}] {option}" for section, option in candidates)
+    raise configparser.NoOptionError(joined, candidates[0][0])
+
+
+def parse_float_list(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> numpy.ndarray:
+    """Read a whitespace-separated float list from the first matching config key."""
+    return numpy.array([float(value) for value in get_config_value(parser, *candidates).split()])
+
+
+def parse_optional_float_list(
+    parser: configparser.ConfigParser,
+    *candidates: tuple[str, str],
+) -> numpy.ndarray | None:
+    """Read an optional whitespace-separated float list."""
+    for section, option in candidates:
+        if parser.has_option(section, option):
+            return numpy.array([float(value) for value in parser.get(section, option).split()])
+    return None
+
+
+def get_int_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> int:
+    """Read an integer value from the first matching config key."""
+    return int(get_config_value(parser, *candidates))
+
+
+def get_float_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> float:
+    """Read a float value from the first matching config key."""
+    return float(get_config_value(parser, *candidates))
+
+
+def get_bool_value(parser: configparser.ConfigParser, *candidates: tuple[str, str]) -> bool:
+    """Read a boolean value from the first matching config key."""
+    return parser._convert_to_boolean(get_config_value(parser, *candidates))
+
+
+def get_optional_config_value(
+    parser: configparser.ConfigParser,
+    *candidates: tuple[str, str],
+) -> str | None:
+    """Read an optional config entry from a list of section/key pairs."""
+    for section, option in candidates:
+        if parser.has_option(section, option):
+            return parser.get(section, option)
+    return None
+
+
+def count_component_terms(n_params: int, order: int) -> int:
+    """Return the number of D-matrix columns for one component up to ``order``."""
+    if order < 0 or order > 2:
+        raise ValueError(f"Only D-matrix orders 0, 1, and 2 are currently supported, got {order}.")
+
+    n_terms = 1
+    if order >= 1:
+        n_terms += n_params
+    if order >= 2:
+        n_terms += n_params * (n_params + 1) // 2
+    return n_terms
+
+
+def validate_fit_setup(
+    *,
+    map_parser: configparser.ConfigParser,
+    fit_parser: configparser.ConfigParser,
+    nu_list: numpy.ndarray,
+    fwhm_list: numpy.ndarray,
+    noise_list: numpy.ndarray,
+    nu_list_fit: numpy.ndarray,
+    fit_params: list[str],
+    fit_inits: numpy.ndarray,
+) -> None:
+    """Raise a clear error when the example config is internally inconsistent."""
+    if len(nu_list) != len(fwhm_list) or len(nu_list) != len(noise_list):
+        raise ValueError("Map config must define the same number of nu, fwhm, and noise entries.")
+
+    if len(fit_params) != len(fit_inits):
+        raise ValueError("Fit config must define the same number of params and inits entries.")
+
+    if len(nu_list_fit) == 0:
+        raise ValueError("Fit config must define at least one fitting frequency in 'nu'.")
+
+    if not numpy.all(numpy.isin(nu_list_fit, nu_list)):
+        missing = [f"{freq:g}" for freq in nu_list_fit[~numpy.isin(nu_list_fit, nu_list)]]
+        raise ValueError(
+            "Fit frequencies must be a subset of the simulation frequencies from the map config. "
+            f"Missing from map config: {', '.join(missing)}"
+        )
+
+    isdust = get_bool_value(fit_parser, ("fit", "isdust"), ("par", "isdust"))
+    issynch = get_bool_value(fit_parser, ("fit", "issynch"), ("par", "issynch"))
+    if not isdust and not issynch:
+        raise ValueError("At least one foreground component must be enabled: set 'isdust' or 'issynch' to True.")
+
+    if "r" not in fit_params:
+        raise ValueError("Fit params must include 'r'.")
+
+    order = get_int_value(fit_parser, ("fit", "order"), ("par", "order")) if (
+        fit_parser.has_option("fit", "order") or fit_parser.has_option("par", "order")
+    ) else 1
+
+    dust_param_count = 0
+    if isdust:
+        dust_param_count = sum(param in fit_params for param in ("T_d1", "x^R", "beta_d"))
+    synch_param_count = 0
+    if issynch:
+        synch_param_count = sum(param in fit_params for param in ("beta_s",))
+
+    min_freq_count = 1
+    if isdust:
+        min_freq_count += count_component_terms(dust_param_count, order)
+    if issynch:
+        min_freq_count += count_component_terms(synch_param_count, order)
+    if len(nu_list_fit) < min_freq_count:
+        raise ValueError(
+            "Not enough fitting frequencies for the selected model. "
+            f"Need at least {min_freq_count}, got {len(nu_list_fit)}."
+        )
+
+    output_name = get_config_value(fit_parser, ("io", "oname"), ("par", "oname"))
+    if not output_name.endswith(".csv"):
+        raise ValueError("Fit outputs should use a '.csv' filename in 'oname'.")
+
+
+def write_fit_result_csv(
+    output_path: Path,
+    seed: int,
+    likelihood: float,
+    param_values: Mapping[str, float],
+    param_errors: Mapping[str, float],
+) -> None:
+    """Write one fit result row as a CSV file with explicit column names."""
+    fieldnames = ["seed", "likelihood"]
+    row: dict[str, float | int] = {"seed": seed, "likelihood": likelihood}
+
+    for key in param_values.keys():
+        value_field = key
+        error_field = f"{key}_error"
+        fieldnames.extend([value_field, error_field])
+        row[value_field] = param_values[key]
+        row[error_field] = param_errors[key]
+
+    with output_path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(row)
+
+
+def write_matrix_csv(output_path: Path, names: Sequence[str], matrix: numpy.ndarray) -> None:
+    """Write a named square matrix to CSV."""
+    with output_path.open("w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["parameter", *names])
+        for name, row in zip(names, matrix):
+            writer.writerow([name, *row])
+
+
+def write_last_fg_minuit_matrices(output_path: Path, dmp: DeltaMap) -> None:
+    """Write final foreground Minuit covariance and correlation matrices."""
+    minuit = dmp.last_fg_minuit
+    if minuit is None or minuit.covariance is None:
+        return
+    names = list(dmp.last_fg_parameter_names) or list(minuit.parameters)
+    covariance = numpy.array(minuit.covariance, dtype=float)
+    errors = numpy.sqrt(numpy.diag(covariance))
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+        correlation = covariance / numpy.outer(errors, errors)
+    correlation[~numpy.isfinite(correlation)] = numpy.nan
+
+    stem = output_path.with_suffix("")
+    write_matrix_csv(stem.with_name(f"{stem.name}_fg_cov.csv"), names, covariance)
+    write_matrix_csv(stem.with_name(f"{stem.name}_fg_corr.csv"), names, correlation)
+
+
+def run_likelihood_profile(dmp: DeltaMap, repeats: int) -> float:
+    """Time repeated likelihood evaluations for the current setup."""
+    if repeats < 1:
+        raise ValueError("profile_repeats must be at least 1")
+
+    d_shape = getattr(dmp.dmtrx, "D_matrix", numpy.empty((0, 0))).shape
+    spatial_builder = getattr(dmp.dmtrx, "spatial_coefficient_builder", None)
+    param_names = [param.name for param in dmp.params]
+
+    print(f"profile parameters: {param_names}")
+    print(f"profile D_matrix shape: {d_shape}")
+    print(f"profile spatial_coefficients active: {spatial_builder is not None}")
+
+    likelihood = numpy.nan
+    timings = []
+    for index in range(repeats):
+        start = time.perf_counter()
+        likelihood = float(dmp.ReturnLikelihood())
+        elapsed = time.perf_counter() - start
+        timings.append(elapsed)
+        print(f"profile likelihood_eval {index + 1}: {elapsed:.6f} s, value={likelihood:.8e}")
+
+    print(f"profile mean_eval_time: {numpy.mean(timings):.6f} s")
+    print(f"profile total_eval_time: {numpy.sum(timings):.6f} s")
+    return likelihood
 
 
 def resolve_path(base_dir: Path, path_text: str) -> str:
@@ -41,6 +254,381 @@ def resolve_path(base_dir: Path, path_text: str) -> str:
         The resolved absolute path.
     """
     return str((base_dir / path_text).resolve())
+
+
+def region_parameter_name(parameter_name: str, region_prefix: str, index: int) -> str:
+    """Return the internal scalar name for one region-wise parameter."""
+    return f"{parameter_name}_{region_prefix}{index}"
+
+
+def expand_region_parameter_inits(
+    initial_params: dict[str, list[float | tuple[float, float]]],
+    parameter_name: str,
+    region_prefix: str,
+    region_count: int,
+    region_values: Sequence[float] | None = None,
+) -> dict[str, list[float | tuple[float, float]]]:
+    """Expand one scalar parameter entry into region-wise scalar entries.
+
+    This mutates ``initial_params`` in place and returns the same dictionary so
+    callers can either use the return value or rely on the mutation.
+    """
+    if region_count <= 0:
+        raise ValueError("region_count must be positive")
+    if parameter_name not in initial_params:
+        raise ValueError(f"Missing initial parameter entry for {parameter_name}")
+
+    initial_value, limits = initial_params.pop(parameter_name)
+    if region_values is None:
+        values = [float(initial_value)] * region_count
+    else:
+        values = [float(value) for value in region_values]
+        if len(values) != region_count:
+            raise ValueError(
+                f"{parameter_name} region initial value count must match "
+                f"region count: {len(values)} != {region_count}"
+            )
+
+    for index, value in enumerate(values):
+        initial_params[region_parameter_name(parameter_name, region_prefix, index)] = [
+            value,
+            limits,
+        ]
+    return initial_params
+
+
+def make_synch_template(templates: Templates, beta_name: str):
+    """Build a synchrotron template with a region-specific beta symbol."""
+    return templates.ReturnPowerLawSynch(symbol_name=beta_name)
+
+
+def make_dust_temperature_template(
+    templates: Templates,
+    beta_name: str,
+    temperature_name: str,
+):
+    """Build the standard dust template with region-specific symbols."""
+    return templates.ReturnMBB1(
+        beta_symbol_name=beta_name,
+        temperature_symbol_name=temperature_name,
+    )
+
+
+def make_dust_xref_template(templates: Templates, beta_name: str, xref_name: str):
+    """Build the xRef dust template with region-specific symbols."""
+    return templates.ReturnMBB1_xRef(
+        beta_symbol_name=beta_name,
+        xref_symbol_name=xref_name,
+    )
+
+
+def add_synch_components_to_dmatrix(
+    dmt: DMatrix,
+    templates: Templates,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+) -> None:
+    """Add the uniform synchrotron component to a DMatrix."""
+    if synch_region_masks is not None:
+        raise ValueError(
+            "column-mask synchrotron regions are retired from normal use; "
+            "use add_spatial_synch_components_to_dmatrix instead"
+        )
+    dmt.AddD(templates.ReturnPowerLawSynch())
+
+
+def use_spatial_synch_region_coefficients(
+    synch_region_masks: Sequence[numpy.ndarray] | None,
+    *,
+    isdust: bool,
+    issynch: bool,
+    uni: bool,
+    order: int,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
+) -> bool:
+    """Return whether the fast spatial region path should be used."""
+    has_region_masks = synch_region_masks is not None or dust_region_masks is not None
+    if not has_region_masks:
+        return False
+
+    unsupported = []
+    if isdust and dust_region_masks is None:
+        unsupported.append("missing dust_region_masks")
+    if not isdust and dust_region_masks is not None:
+        unsupported.append("dust_region_masks with isdust=False")
+    if issynch and synch_region_masks is None:
+        unsupported.append("missing synch_region_masks")
+    if not issynch and synch_region_masks is not None:
+        unsupported.append("synch_region_masks with issynch=False")
+    if uni:
+        unsupported.append("uni=True")
+    if order != 1:
+        unsupported.append(f"order={order}")
+    if unsupported:
+        raise ValueError(
+            "region masks currently require the spatial first-order path with "
+            "masks for every enabled foreground component; unsupported settings: "
+            + ", ".join(unsupported)
+        )
+    return True
+
+
+def add_spatial_region_components_to_dmatrix(
+    dmt: DMatrix,
+    templates: Templates,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+) -> None:
+    """Add dust and/or synchrotron terms using pixel-dependent coefficients."""
+    template_terms = []
+    coefficient_specs = []
+    nu_symbol = sympy.Symbol("nu")
+
+    if dust_region_masks is not None:
+        dust_terms = []
+        dust_beta_derivatives = []
+        dust_temp_derivatives = []
+        for index, region_mask in enumerate(dust_region_masks):
+            beta_symbol = sympy.Symbol(region_parameter_name("beta_d", "dreg", index))
+            temp_symbol = sympy.Symbol(region_parameter_name("T_d1", "dreg", index))
+            term = make_dust_temperature_template(
+                templates,
+                beta_symbol.name,
+                temp_symbol.name,
+            )
+            derivative_beta = sympy.diff(term, beta_symbol)
+            derivative_temp = sympy.diff(term, temp_symbol)
+            dust_terms.append(term)
+            dust_beta_derivatives.append(derivative_beta)
+            dust_temp_derivatives.append(derivative_temp)
+            coefficient_specs.append(
+                (
+                    numpy.asarray(region_mask, dtype=numpy.float64),
+                    [
+                        (
+                            0,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol, temp_symbol),
+                                term,
+                                "numpy",
+                            ),
+                        ),
+                        (
+                            1,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol, temp_symbol),
+                                derivative_beta,
+                                "numpy",
+                            ),
+                        ),
+                        (
+                            2,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol, temp_symbol),
+                                derivative_temp,
+                                "numpy",
+                            ),
+                        ),
+                    ],
+                    [beta_symbol.name, temp_symbol.name],
+                )
+            )
+        template_terms.extend(
+            [
+                sum(dust_terms),
+                sum(dust_beta_derivatives),
+                sum(dust_temp_derivatives),
+            ]
+        )
+
+    synch_column_offset = len(template_terms)
+    if synch_region_masks is not None:
+        synch_terms = []
+        synch_derivatives = []
+        for index, region_mask in enumerate(synch_region_masks):
+            beta_symbol = sympy.Symbol(region_parameter_name("beta_s", "sreg", index))
+            term = make_synch_template(templates, beta_symbol.name)
+            derivative = sympy.diff(term, beta_symbol)
+            synch_terms.append(term)
+            synch_derivatives.append(derivative)
+            coefficient_specs.append(
+                (
+                    numpy.asarray(region_mask, dtype=numpy.float64),
+                    [
+                        (
+                            synch_column_offset,
+                            sympy.lambdify((nu_symbol, beta_symbol), term, "numpy"),
+                        ),
+                        (
+                            synch_column_offset + 1,
+                            sympy.lambdify(
+                                (nu_symbol, beta_symbol),
+                                derivative,
+                                "numpy",
+                            ),
+                        ),
+                    ],
+                    [beta_symbol.name],
+                )
+            )
+        template_terms.extend([sum(synch_terms), sum(synch_derivatives)])
+
+    if not template_terms:
+        raise ValueError("At least one region mask set is required")
+
+    def coefficient_builder(freqs, param_values, size):
+        coefficients = numpy.zeros(
+            (len(freqs), len(template_terms), size),
+            dtype=numpy.float64,
+        )
+        for region_mask, functions, parameter_names in coefficient_specs:
+            if region_mask.shape != (size,):
+                raise ValueError(
+                    "Region mask length must match DeltaMap size for spatial "
+                    f"coefficients: {region_mask.shape} != ({size},)"
+                )
+            parameter_values = [param_values[name] for name in parameter_names]
+            for freq_index, nu_value in enumerate(freqs):
+                for column_index, function in functions:
+                    coefficients[freq_index, column_index] += (
+                        float(function(float(nu_value), *parameter_values))
+                        * region_mask
+                    )
+        return coefficients
+
+    dmt.SetSpatialCoefficients(
+        [sympy.simplify(term) for term in template_terms],
+        coefficient_builder,
+    )
+
+
+def add_spatial_synch_components_to_dmatrix(
+    dmt: DMatrix,
+    templates: Templates,
+    synch_region_masks: Sequence[numpy.ndarray],
+) -> None:
+    """Add synchrotron terms using pixel-dependent region coefficients."""
+    add_spatial_region_components_to_dmatrix(
+        dmt,
+        templates,
+        synch_region_masks=synch_region_masks,
+    )
+
+
+def load_region_masks(
+    fit_parser: configparser.ConfigParser,
+    fitconfig_dir: Path,
+    maskname: str,
+    nside: int,
+    region_key: str,
+) -> list[numpy.ndarray] | None:
+    """Load optional Q/U-expanded region masks from config."""
+    mask_setting = get_optional_config_value(
+        fit_parser,
+        ("regions", region_key),
+        ("par", region_key),
+    )
+    if mask_setting is None:
+        return None
+
+    analysis_mask = healpy.read_map(
+        maskname,
+        field=0,
+        nest=False,
+        dtype=numpy.float64,
+    )
+    analysis_mask = healpy.ud_grade(analysis_mask, nside_out=nside) != 0.0
+    region_masks = []
+    for mask_path in mask_setting.split():
+        region_mask = numpy.load(resolve_path(fitconfig_dir, mask_path)).astype(bool)
+        validate_region_mask_nside(region_mask, analysis_mask, nside)
+        region_masks.append(
+            restrict_region_mask_to_observed_qu(region_mask, analysis_mask)
+        )
+    observed_analysis_mask = numpy.ones(
+        int(numpy.count_nonzero(analysis_mask)) * 2,
+        dtype=bool,
+    )
+    validate_region_masks(region_masks, observed_analysis_mask)
+    return region_masks
+
+
+def load_synch_region_masks(
+    fit_parser: configparser.ConfigParser,
+    fitconfig_dir: Path,
+    maskname: str,
+    nside: int,
+) -> list[numpy.ndarray] | None:
+    """Load optional synchrotron region masks from config."""
+    return load_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+        "synch_region_masks",
+    )
+
+
+def load_dust_region_masks(
+    fit_parser: configparser.ConfigParser,
+    fitconfig_dir: Path,
+    maskname: str,
+    nside: int,
+) -> list[numpy.ndarray] | None:
+    """Load optional dust region masks from config."""
+    return load_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+        "dust_region_masks",
+    )
+
+
+def validate_region_mask_nside(
+    region_mask: numpy.ndarray,
+    analysis_mask: numpy.ndarray,
+    nside: int,
+) -> None:
+    """Raise if a region mask cannot match the configured nside."""
+    n_pix = healpy.nside2npix(nside)
+    if analysis_mask.shape != (n_pix,):
+        raise ValueError(
+            "Analysis mask shape is inconsistent with configured nside "
+            f"{nside}: got {analysis_mask.shape}, expected {(n_pix,)}"
+        )
+    n_obs = int(numpy.count_nonzero(analysis_mask))
+    valid_shapes = {(n_pix,), (2 * n_pix,), (2 * n_obs,)}
+    if region_mask.shape not in valid_shapes:
+        raise ValueError(
+            "Region mask shape is inconsistent with configured nside "
+            f"{nside}: got {region_mask.shape}, expected one of "
+            f"{sorted(valid_shapes)}"
+        )
+
+
+def restrict_region_mask_to_observed_qu(
+    region_mask: numpy.ndarray,
+    analysis_mask: numpy.ndarray,
+) -> numpy.ndarray:
+    """Return a region mask in the observed [Q..., U...] vector layout."""
+    n_pix = len(analysis_mask)
+    n_obs = int(numpy.count_nonzero(analysis_mask))
+    if region_mask.shape == (n_pix,):
+        return expand_to_qu(region_mask[analysis_mask])
+    if region_mask.shape == (2 * n_pix,):
+        return numpy.concatenate(
+            [
+                region_mask[:n_pix][analysis_mask],
+                region_mask[n_pix:][analysis_mask],
+            ]
+        )
+    if region_mask.shape == (2 * n_obs,):
+        return region_mask
+    raise ValueError(
+        "Region mask shape must match pixel, full Q/U, or observed Q/U layout: "
+        f"{region_mask.shape} is incompatible with {n_pix} pixels and {n_obs} "
+        "observed pixels"
+    )
 
 
 def read_cell(cl_s_name: str | Path, nside: int, is_scalar: bool = True) -> FloatArray:
@@ -283,13 +871,19 @@ def return_map_with_noise_cov(
     if isdust and uni:
         piv_mbb1 = float(dust_model.evalf(subs={"nu": 402}))
 
-    input_dir_value = input_dir if input_dir is not None else map_parser.get("simpar", "input_dir")
+    input_dir_value = (
+        input_dir
+        if input_dir is not None
+        else get_config_value(map_parser, ("simulation", "input_dir"), ("simpar", "input_dir"))
+    )
     input_dir_path = Path(input_dir_value)
     input_dir_path.mkdir(parents=True, exist_ok=True)
-    noise_template = str(input_dir_path / map_parser.get("simpar", "noise_name"))
-    anoise_freq_template = str(input_dir_path / map_parser.get("simpar", "anoise_freq_name"))
-    anoise_template = str(input_dir_path / map_parser.get("simpar", "anoise_name"))
-    cmb_template = str(input_dir_path / map_parser.get("simpar", "cmb_name"))
+    noise_template = str(input_dir_path / get_config_value(map_parser, ("simulation", "noise_name"), ("simpar", "noise_name")))
+    anoise_freq_template = str(
+        input_dir_path / get_config_value(map_parser, ("simulation", "anoise_freq_name"), ("simpar", "anoise_freq_name"))
+    )
+    anoise_template = str(input_dir_path / get_config_value(map_parser, ("simulation", "anoise_name"), ("simpar", "anoise_name")))
+    cmb_template = str(input_dir_path / get_config_value(map_parser, ("simulation", "cmb_name"), ("simpar", "cmb_name")))
 
     synchmapname = synch_template
     dustmapname = dust_template
@@ -299,6 +893,8 @@ def return_map_with_noise_cov(
     anoise_scale = "{0:.1e}".format(anoise).replace(".", "p")
     anoise_name = anoise_template.format(nside, anoise_scale, seed)
     if re_noise or not os.path.exists(anoise_name):
+        # Paper artificial noise: add a common CMB-side realization so the
+        # shared covariance stays positive definite and invertible.
         random_anoise = return_anoise_map(anoise, nside, nonzero_len)
         if not os.path.exists(anoise_name):
             numpy.save(anoise_name, random_anoise)
@@ -378,6 +974,9 @@ def return_map_with_noise_cov(
         mvec_each += random_anoise
         anoise_freq_name = anoise_freq_template.format(nu_str, nside, seed)
         if re_noise or not os.path.exists(anoise_freq_name):
+            # Paper artificial noise: add one independent instrument-side
+            # realization per channel so each noise covariance remains
+            # positive definite and invertible.
             if fgnoise_fac is None:
                 random_freq_anoise = return_anoise_map(anoise, nside, nonzero_len)
             else:
@@ -387,18 +986,6 @@ def return_map_with_noise_cov(
         else:
             random_freq_anoise = numpy.load(anoise_freq_name)
             print("read old anoise freq  map")
-
-            random_anoise = return_anoise_map(anoise, nside, nonzero_len)
-            if not os.path.exists(anoise_name):
-                numpy.save(anoise_name, random_anoise)
-
-        if fgnoise_fac is None:
-            random_freq_anoise = return_anoise_map(anoise, nside, nonzero_len)
-            # random_freq_anoise = numpy.random.randn(nonzero_len) * asigma
-        else:
-            random_freq_anoise = return_anoise_map(noise / fgnoise_fac, nside, nonzero_len)
-            # noise_sigma_freq = return_noise_sigma(noise / fgnoise_fac, nside)
-            # random_freq_anoise = numpy.random.randn(nonzero_len) * noise_sigma_freq
         mvec_each += random_freq_anoise
 
         mvec.append(mvec_each)
@@ -423,6 +1010,7 @@ def test_fg_with_noise_cov(
     uni: bool = False,
     fixTd: bool = False,
     fixbetad: bool = False,
+    order: int = 1,
     fgnoise_fac: float | None = None,
     fgfac: float = 1.0,
     dmp: DeltaMap | None = None,
@@ -434,6 +1022,11 @@ def test_fg_with_noise_cov(
     isdust_map: bool | None = None,
     issynch_map: bool | None = None,
     input_dir: str | None = None,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_s_region_inits: Sequence[float] | None = None,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_d_region_inits: Sequence[float] | None = None,
+    T_d1_region_inits: Sequence[float] | None = None,
 ) -> DeltaMap:
     """Prepare a DeltaMap fit using the standard dust-temperature parameterization.
 
@@ -515,18 +1108,34 @@ def test_fg_with_noise_cov(
         dmp.initialise()
         return dmp
 
+    use_spatial_synch_regions = use_spatial_synch_region_coefficients(
+        synch_region_masks,
+        isdust=isdust,
+        issynch=issynch,
+        uni=uni,
+        order=order,
+        dust_region_masks=dust_region_masks,
+    )
+
     dmt = DMatrix()
-    if isdust:
+    if isdust and not use_spatial_synch_regions:
         dmt.AddD(mbb1)
-    if issynch:
-        dmt.AddD(synch)
+    if issynch and not use_spatial_synch_regions:
+        add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
 
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
-    if uni:
+    if use_spatial_synch_regions:
+        add_spatial_region_components_to_dmatrix(
+            dmt,
+            tmpl,
+            dust_region_masks=dust_region_masks,
+            synch_region_masks=synch_region_masks,
+        )
+    elif uni:
         dmt.PrepareUniformDMatrix()
     else:
-        dmt.PrepareDMatrix()
+        dmt.PrepareDMatrix(order=order)
 
     cov = Covariance(nside=nside, maskname=maskname, verbose=False, pixwin=True, lmax=nside * 2, fwhm=fwhm)
     cov.Initialise()
@@ -535,6 +1144,7 @@ def test_fg_with_noise_cov(
     s0_bsm = cov.ReturnCovMatrix(False)
 
     asigma = return_noise_sigma(anoise, nside)
+    # Match the common CMB-side artificial noise added in map generation.
     a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
     dmp.SetFgDmatrix(dmt)
@@ -575,6 +1185,31 @@ def test_fg_with_noise_cov(
         initial_params = {"r": [0.0, (0.0, 2.0)], "beta_s": [-3.47, (-10.0, -0.01)]}
     else:
         initial_params = {"r": [0.0, (0.0, 2.0)]}
+    if synch_region_masks is not None and "beta_s" in initial_params:
+        expand_region_parameter_inits(
+            initial_params,
+            "beta_s",
+            "sreg",
+            len(synch_region_masks),
+            beta_s_region_inits,
+        )
+    if dust_region_masks is not None:
+        if "beta_d" in initial_params:
+            expand_region_parameter_inits(
+                initial_params,
+                "beta_d",
+                "dreg",
+                len(dust_region_masks),
+                beta_d_region_inits,
+            )
+        if "T_d1" in initial_params:
+            expand_region_parameter_inits(
+                initial_params,
+                "T_d1",
+                "dreg",
+                len(dust_region_masks),
+                T_d1_region_inits,
+            )
     dmp.SetParameterInitial(initial_params)
     return dmp
 
@@ -597,6 +1232,7 @@ def test_fg_with_noise_cov_xref(
     uni: bool = False,
     fixTd: bool = False,
     fixbetad: bool = False,
+    order: int = 1,
     fgnoise_fac: float | None = None,
     fgfac: float = 1.0,
     dmp: DeltaMap | None = None,
@@ -608,6 +1244,11 @@ def test_fg_with_noise_cov_xref(
     isdust_map: bool | None = None,
     issynch_map: bool | None = None,
     input_dir: str | None = None,
+    synch_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_s_region_inits: Sequence[float] | None = None,
+    dust_region_masks: Sequence[numpy.ndarray] | None = None,
+    beta_d_region_inits: Sequence[float] | None = None,
+    T_d1_region_inits: Sequence[float] | None = None,
 ) -> DeltaMap:
     """Prepare a DeltaMap fit using the ``x^R`` dust parameterization.
 
@@ -690,18 +1331,34 @@ def test_fg_with_noise_cov_xref(
         dmp.initialise()
         return dmp
 
+    use_spatial_synch_regions = use_spatial_synch_region_coefficients(
+        synch_region_masks,
+        isdust=isdust,
+        issynch=issynch,
+        uni=uni,
+        order=order,
+        dust_region_masks=dust_region_masks,
+    )
+
     dmt = DMatrix()
-    if isdust:
+    if isdust and not use_spatial_synch_regions:
         dmt.AddD(mbb1)
-    if issynch:
-        dmt.AddD(synch)
+    if issynch and not use_spatial_synch_regions:
+        add_synch_components_to_dmatrix(dmt, tmpl, synch_region_masks)
 
     dmp = DeltaMap(verbose=False)
     dmt.SetFreqs(freq_list, [None] * len(freq_list))
-    if uni:
+    if use_spatial_synch_regions:
+        add_spatial_region_components_to_dmatrix(
+            dmt,
+            tmpl,
+            dust_region_masks=dust_region_masks,
+            synch_region_masks=synch_region_masks,
+        )
+    elif uni:
         dmt.PrepareUniformDMatrix()
     else:
-        dmt.PrepareDMatrix()
+        dmt.PrepareDMatrix(order=order)
 
     cov = Covariance(nside=nside, maskname=maskname, verbose=False, pixwin=True, lmax=nside * 2, fwhm=fwhm)
     cov.Initialise()
@@ -709,7 +1366,7 @@ def test_fg_with_noise_cov_xref(
     s0_sm = cov.ReturnCovMatrix(True)
     s0_bsm = cov.ReturnCovMatrix(False)
     asigma = return_noise_sigma(anoise, nside)
-    # a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
+    # Match the common CMB-side artificial noise added in map generation.
     a_noise_cov = numpy.eye(s0_sm.shape[0]) * pow(asigma, 2)
     dmp.SetS0(s0_sm + a_noise_cov, s0_bsm)
     dmp.SetFgDmatrix(dmt)
@@ -750,6 +1407,27 @@ def test_fg_with_noise_cov_xref(
         initial_params = {"r": [0.0, (0.0, 2.0)], "beta_s": [-3.47, (-10.0, -0.01)]}
     else:
         initial_params = {"r": [0.0, (0.0, 2.0)]}
+    if synch_region_masks is not None and "beta_s" in initial_params:
+        expand_region_parameter_inits(
+            initial_params,
+            "beta_s",
+            "sreg",
+            len(synch_region_masks),
+            beta_s_region_inits,
+        )
+    if dust_region_masks is not None:
+        if "beta_d" in initial_params:
+            expand_region_parameter_inits(
+                initial_params,
+                "beta_d",
+                "dreg",
+                len(dust_region_masks),
+                beta_d_region_inits,
+            )
+        if "x^R" in initial_params:
+            raise ValueError("dust_region_masks are not yet supported for x^R dust fits")
+        if T_d1_region_inits is not None:
+            raise ValueError("T_d1_region_inits cannot be used with x^R dust fits")
     dmp.SetParameterInitial(initial_params)
     return dmp
 
@@ -781,17 +1459,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     fit_parser.read(fitconfig_path)
     numpy.random.seed(args.seed)
 
-    nu_list = numpy.array([float(i) for i in map_parser.get("par", "nu").split()])
-    fwhm_list = numpy.array([float(i) for i in map_parser.get("par", "fwhm").split()])
-    noise_list = numpy.array([float(i) for i in map_parser.get("par", "noise").split()])
-    nside = fit_parser.getint("par", "nside")
+    nu_list = parse_float_list(map_parser, ("instrument", "nu"), ("par", "nu"))
+    fwhm_list = parse_float_list(map_parser, ("instrument", "fwhm"), ("par", "fwhm"))
+    noise_list = parse_float_list(map_parser, ("instrument", "noise"), ("par", "noise"))
+    nside = get_int_value(fit_parser, ("fit", "nside"), ("par", "nside"))
 
     fwhm_norm = 2200.0
     if nside != 4:
         fwhm_norm = 2200.0 * pow(4.0 / nside, 2)
 
-    dust_template_pattern = fit_parser.get("par", "dust_temp")
-    synch_template_pattern = fit_parser.get("par", "synch_temp")
+    dust_template_pattern = get_config_value(fit_parser, ("templates", "dust_temp"), ("par", "dust_temp"))
+    synch_template_pattern = get_config_value(fit_parser, ("templates", "synch_temp"), ("par", "synch_temp"))
     dust_template = resolve_path(fitconfig_dir, dust_template_pattern.format_map(SafeDict(nside=nside)))
     synch_template = resolve_path(fitconfig_dir, synch_template_pattern.format_map(SafeDict(nside=nside)))
 
@@ -806,21 +1484,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     dust_beta_d = healpy.read_map(dust_beta_path, field=(0), dtype=numpy.float64)
     dust_td1 = healpy.read_map(dust_temp_path, field=(0), dtype=numpy.float64)
 
-    nu_list_fit = numpy.array([float(i) for i in fit_parser.get("par", "nu").split()])
+    nu_list_fit = parse_float_list(fit_parser, ("fit", "nu"), ("par", "nu"))
 
     dust_beta_d = healpy.ud_grade(map_in=dust_beta_d, nside_out=nside, order_in="RING", order_out="RING")
     dust_td1 = healpy.ud_grade(map_in=dust_td1, nside_out=nside, order_in="RING", order_out="RING")
 
     temp_freqs = nu_list_fit
     temp_noise = noise_list
-    anoise = fit_parser.getfloat("par", "anoise")
-    if fit_parser.getfloat("par", "fgnoise_fac") < 0:
+    anoise = get_float_value(fit_parser, ("fit", "anoise"), ("par", "anoise"))
+    if get_float_value(fit_parser, ("fit", "fgnoise_fac"), ("par", "fgnoise_fac")) < 0:
         fgnoise_fac = None
     else:
-        fgnoise_fac = fit_parser.getfloat("par", "fgnoise_fac")
+        fgnoise_fac = get_float_value(fit_parser, ("fit", "fgnoise_fac"), ("par", "fgnoise_fac"))
+    fit_order = get_int_value(fit_parser, ("fit", "order"), ("par", "order")) if (
+        fit_parser.has_option("fit", "order") or fit_parser.has_option("par", "order")
+    ) else 1
 
-    fit_params = fit_parser.get("par", "params").split()
-    fit_inits = numpy.array([float(i) for i in fit_parser.get("par", "inits").split()])
+    fit_params = get_config_value(fit_parser, ("fit", "params"), ("par", "params")).split()
+    fit_inits = parse_float_list(fit_parser, ("fit", "inits"), ("par", "inits"))
+    validate_fit_setup(
+        map_parser=map_parser,
+        fit_parser=fit_parser,
+        nu_list=nu_list,
+        fwhm_list=fwhm_list,
+        noise_list=noise_list,
+        nu_list_fit=nu_list_fit,
+        fit_params=fit_params,
+        fit_inits=fit_inits,
+    )
     params = {}
     param_defs = {}
     for par, ini in zip(fit_params, fit_inits):
@@ -830,9 +1521,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         noise_comb = temp_noise[numpy.isin(nu_list, temp_freqs)]
     fwhm_comb = fwhm_list[numpy.isin(nu_list, temp_freqs)]
 
-    input_dir_setting = map_parser.get("simpar", "input_dir")
-    output_dir_setting = fit_parser.get("par", "odir")
-    output_name_setting = fit_parser.get("par", "oname")
+    input_dir_setting = get_config_value(map_parser, ("simulation", "input_dir"), ("simpar", "input_dir"))
+    output_dir_setting = get_config_value(fit_parser, ("io", "odir"), ("par", "odir"))
+    output_name_setting = get_config_value(fit_parser, ("io", "oname"), ("par", "oname"))
 
     input_dir = resolve_path(config_dir, input_dir_setting)
     odir = Path(resolve_path(fitconfig_dir, output_dir_setting.format(fitconfig_path.stem)))
@@ -841,7 +1532,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     if oname.exists():
         return 0
 
-    maskname = resolve_path(config_dir, map_parser.get("simpar", "maskname"))
+    maskname = resolve_path(config_dir, get_config_value(map_parser, ("simulation", "maskname"), ("simpar", "maskname")))
+    synch_region_masks = load_synch_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+    )
+    dust_region_masks = load_dust_region_masks(
+        fit_parser,
+        fitconfig_dir,
+        maskname,
+        nside,
+    )
+    beta_s_region_inits = parse_optional_float_list(
+        fit_parser,
+        ("regions", "beta_s_region_inits"),
+        ("par", "beta_s_region_inits"),
+    )
+    beta_d_region_inits = parse_optional_float_list(
+        fit_parser,
+        ("regions", "beta_d_region_inits"),
+        ("par", "beta_d_region_inits"),
+    )
+    T_d1_region_inits = parse_optional_float_list(
+        fit_parser,
+        ("regions", "T_d1_region_inits"),
+        ("par", "T_d1_region_inits"),
+    )
 
     dmp = None
 
@@ -854,21 +1572,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             map_parser,
             nside=nside,
             fwhm=fwhm_norm,
-            isdust=fit_parser.getboolean("par", "isdust"),
-            issynch=fit_parser.getboolean("par", "issynch"),
-            r=fit_parser.getfloat("par", "r"),
-            uni=fit_parser.getboolean("par", "uni"),
+            isdust=get_bool_value(fit_parser, ("fit", "isdust"), ("par", "isdust")),
+            issynch=get_bool_value(fit_parser, ("fit", "issynch"), ("par", "issynch")),
+            r=get_float_value(fit_parser, ("fit", "r"), ("par", "r")),
+            uni=get_bool_value(fit_parser, ("fit", "uni"), ("par", "uni")),
             param_defs=param_defs,
             dust_template=dust_template,
             synch_template=synch_template,
             anoise=anoise,
             fgnoise_fac=fgnoise_fac,
-            fixTd=fit_parser.getboolean("par", "fixTd"),
+            fixTd=get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")),
+            order=fit_order,
             dmp=dmp,
             T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),
             seed=args.seed,
             input_dir=input_dir,
+            synch_region_masks=synch_region_masks,
+            beta_s_region_inits=beta_s_region_inits,
+            dust_region_masks=dust_region_masks,
+            beta_d_region_inits=beta_d_region_inits,
+            T_d1_region_inits=T_d1_region_inits,
         )
     else:
         dmp = test_fg_with_noise_cov_xref(
@@ -879,21 +1603,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             map_parser,
             nside=nside,
             fwhm=fwhm_norm,
-            isdust=fit_parser.getboolean("par", "isdust"),
-            issynch=fit_parser.getboolean("par", "issynch"),
-            r=fit_parser.getfloat("par", "r"),
-            uni=fit_parser.getboolean("par", "uni"),
+            isdust=get_bool_value(fit_parser, ("fit", "isdust"), ("par", "isdust")),
+            issynch=get_bool_value(fit_parser, ("fit", "issynch"), ("par", "issynch")),
+            r=get_float_value(fit_parser, ("fit", "r"), ("par", "r")),
+            uni=get_bool_value(fit_parser, ("fit", "uni"), ("par", "uni")),
             param_defs=param_defs,
             dust_template=dust_template,
             synch_template=synch_template,
             anoise=anoise,
             fgnoise_fac=fgnoise_fac,
-            fixTd=fit_parser.getboolean("par", "fixTd"),
+            fixTd=get_bool_value(fit_parser, ("fit", "fixTd"), ("par", "fixTd")),
+            order=fit_order,
             dmp=dmp,
             T_d1_mean=dust_td1.mean(),
             beta_d_mean=dust_beta_d.mean(),
             seed=args.seed,
             input_dir=input_dir,
+            synch_region_masks=synch_region_masks,
+            beta_s_region_inits=beta_s_region_inits,
+            dust_region_masks=dust_region_masks,
+            beta_d_region_inits=beta_d_region_inits,
+            T_d1_region_inits=T_d1_region_inits,
         )
 
     dmp.SetParameters(values=params)
@@ -901,22 +1631,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     with_td_prior = False
     td_sigma = None
     try:
-        with_td_prior = fit_parser.getboolean("par", "Tdprior")
+        with_td_prior = get_bool_value(fit_parser, ("priors", "Tdprior"), ("par", "Tdprior"))
     except (configparser.NoOptionError, ValueError):
         pass
     try:
-        td_sigma = fit_parser.getfloat("par", "Tdsigma")
+        td_sigma = get_float_value(fit_parser, ("priors", "Tdsigma"), ("par", "Tdsigma"))
     except (configparser.NoOptionError, ValueError):
         td_sigma = 3.0
     with_xr_prior = False
     xr_sigma = None
     try:
-        with_xr_prior = fit_parser.getboolean("par", "xRprior")
+        with_xr_prior = get_bool_value(fit_parser, ("priors", "xRprior"), ("par", "xRprior"))
     except (configparser.NoOptionError, ValueError):
         pass
 
     try:
-        xr_sigma = fit_parser.getfloat("par", "xRsigma")
+        xr_sigma = get_float_value(fit_parser, ("priors", "xRsigma"), ("par", "xRsigma"))
     except (configparser.NoOptionError, ValueError):
         xr_sigma = 3.0
 
@@ -943,16 +1673,88 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     with_migrad = True
     try:
-        with_migrad = fit_parser.getboolean("par", "migrad")
+        with_migrad = get_bool_value(fit_parser, ("fit", "migrad"), ("par", "migrad"))
     except (configparser.NoOptionError, ValueError):
         pass
 
     dmp.migrad = with_migrad
     dmp.r_verbose = False
+    try:
+        dmp.migrad_ncall = get_int_value(
+            fit_parser,
+            ("diagnostics", "migrad_ncall"),
+            ("fit", "migrad_ncall"),
+            ("par", "migrad_ncall"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+    try:
+        dmp.minuit_trace = get_bool_value(
+            fit_parser,
+            ("diagnostics", "minuit_trace"),
+            ("fit", "minuit_trace"),
+            ("par", "minuit_trace"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+    try:
+        dmp.internal_timing = get_bool_value(
+            fit_parser,
+            ("diagnostics", "internal_timing"),
+            ("fit", "internal_timing"),
+            ("par", "internal_timing"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+    try:
+        dmp.r_minimizer = get_config_value(
+            fit_parser,
+            ("diagnostics", "r_minimizer"),
+            ("fit", "r_minimizer"),
+            ("par", "r_minimizer"),
+        )
+    except configparser.NoOptionError:
+        pass
+    save_minuit_matrices = False
+    try:
+        save_minuit_matrices = get_bool_value(
+            fit_parser,
+            ("diagnostics", "save_minuit_matrices"),
+            ("fit", "save_minuit_matrices"),
+            ("par", "save_minuit_matrices"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+
+    profile_only = False
+    try:
+        profile_only = get_bool_value(fit_parser, ("diagnostics", "profile_only"), ("par", "profile_only"))
+    except (configparser.NoOptionError, ValueError):
+        pass
+    profile_repeats = 3
+    try:
+        profile_repeats = get_int_value(
+            fit_parser,
+            ("diagnostics", "profile_repeats"),
+            ("par", "profile_repeats"),
+        )
+    except (configparser.NoOptionError, ValueError):
+        pass
+    if profile_only:
+        dmp.lh = run_likelihood_profile(dmp, profile_repeats)
+        dmp.param_errors = {key: numpy.nan for key in dmp.param_values.keys()}
+        write_fit_result_csv(
+            oname,
+            seed=args.seed,
+            likelihood=dmp.lh,
+            param_values=dmp.param_values,
+            param_errors=dmp.param_errors,
+        )
+        return 0
 
     simul = False
     try:
-        simul = fit_parser.getboolean("par", "simul")
+        simul = get_bool_value(fit_parser, ("fit", "simul"), ("par", "simul"))
     except (configparser.NoOptionError, ValueError):
         simul = False
     if not simul:
@@ -992,11 +1794,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(dmp.param_values)
             n_iter += 1
 
-    result_row = [args.seed, dmp.lh]
-    for key in dmp.param_values.keys():
-        result_row.append(dmp.param_values[key])
-        result_row.append(dmp.param_errors[key])
-    numpy.save(oname, numpy.asarray([result_row]))
+    write_fit_result_csv(
+        oname,
+        seed=args.seed,
+        likelihood=dmp.lh,
+        param_values=dmp.param_values,
+        param_errors=dmp.param_errors,
+    )
+    if save_minuit_matrices:
+        write_last_fg_minuit_matrices(oname, dmp)
 
     return 0
 

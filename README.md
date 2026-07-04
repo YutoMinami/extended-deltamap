@@ -262,6 +262,11 @@ This repository has recently been updated to:
   region generation under scripts/
 - fixed r-step likelihood threshold scaling and outer-loop comparison criterion
   in IterateMinimize
+- stabilized the spin-2 Legendre basis construction in
+  `extended_deltamap.covariance` by replacing raw `lpmv` basis precomputation
+  with normalized associated-Legendre values and log-space normalization; the
+  new path was checked against the previous implementation at `nside=4`,
+  `lmax=8`
 
 ## Caveats
 

@@ -3,13 +3,89 @@ import os
 import healpy
 import numpy
 import scipy
-from scipy.special import factorial, lpmv, perm
+from scipy.special import assoc_legendre_p_all, factorial, gammaln, lpmv, perm
 
 try:
     sph_harm_func = scipy.special.sph_harm
 except AttributeError:
     sph_harm_func = scipy.special.sph_harm_y
 # https://arxiv.org/abs/astro-ph/0508514
+
+
+def _normed_assoc_row(p_all, degree, order):
+    """Return SciPy-normalized associated Legendre values for m >= 0."""
+    out = numpy.zeros(len(degree), dtype=float)
+    valid = order <= degree
+    out[valid] = p_all[degree[valid], order[valid]]
+    return out
+
+
+def _scaled_plm_for_current_l(p_all, current_l, mvec, degree):
+    """Return sqrt((2l+1)/4pi) * N_lm * P_degree^m stably."""
+    current_l_i = current_l.astype(numpy.int64)
+    m_i = mvec.astype(numpy.int64)
+    degree_i = degree.astype(numpy.int64)
+    order_i = numpy.abs(m_i)
+    valid = order_i <= degree_i
+
+    out = numpy.zeros(len(current_l_i), dtype=float)
+    if not numpy.any(valid):
+        return out
+
+    l_v = current_l_i[valid].astype(float)
+    d_v = degree_i[valid].astype(float)
+    m_v = m_i[valid]
+    k_v = order_i[valid].astype(float)
+    p_norm = _normed_assoc_row(p_all, degree_i[valid], order_i[valid])
+
+    base_log = numpy.log(2.0) + 0.5 * (
+        gammaln(l_v - 1.0) - gammaln(l_v + 3.0)
+    )
+    harmonic_log = 0.5 * (
+        numpy.log(2.0 * l_v + 1.0) - numpy.log(4.0 * numpy.pi)
+    )
+    scipy_norm_log = 0.5 * (
+        numpy.log(2.0 * d_v + 1.0)
+        - numpy.log(2.0)
+        + gammaln(d_v - k_v + 1.0)
+        - gammaln(d_v + k_v + 1.0)
+    )
+
+    positive = m_v >= 0
+    scaled = numpy.empty(len(m_v), dtype=float)
+    if numpy.any(positive):
+        l_p = l_v[positive]
+        k_p = k_v[positive]
+        log_factor = (
+            harmonic_log[positive]
+            + base_log[positive]
+            + 0.5
+            * (gammaln(l_p - k_p + 1.0) - gammaln(l_p + k_p + 1.0))
+            - scipy_norm_log[positive]
+        )
+        scaled[positive] = numpy.exp(log_factor) * p_norm[positive]
+
+    negative = ~positive
+    if numpy.any(negative):
+        l_n = l_v[negative]
+        d_n = d_v[negative]
+        k_n = k_v[negative]
+        relation_log = gammaln(d_n - k_n + 1.0) - gammaln(
+            d_n + k_n + 1.0
+        )
+        log_factor = (
+            harmonic_log[negative]
+            + base_log[negative]
+            + 0.5
+            * (gammaln(l_n + k_n + 1.0) - gammaln(l_n - k_n + 1.0))
+            + relation_log
+            - scipy_norm_log[negative]
+        )
+        signs = numpy.where(order_i[valid][negative] % 2 == 0, 1.0, -1.0)
+        scaled[negative] = signs * numpy.exp(log_factor) * p_norm[negative]
+
+    out[valid] = scaled
+    return out
 
 
 class Covariance:
@@ -275,24 +351,34 @@ class Covariance:
         """Precompute W and X basis arrays for all retained pixels."""
         self.Warray = numpy.zeros((len(self.m_indices), len(self.lvec)), dtype="complex128")
         self.Xarray = numpy.zeros((len(self.m_indices), len(self.lvec)), dtype="complex128")
-        self.Nlmarray = self.ReturnNlmArray()
-        mask = abs(self.mvec) <= (self.lvec - 1)
         for idx in self.m_indices:
             thetas = numpy.full(len(self.lvec), self.angles[idx][0])
             phis = numpy.full(len(self.lvec), self.angles[idx][1])
-            Plms_first = numpy.zeros(len(self.lvec))
-
-            Plms_second = numpy.zeros(len(self.lvec))
-
-            Plms_second[mask] = lpmv(
-                self.mvec[mask].astype(numpy.int64), self.lvec[mask].astype(numpy.int64) - 1, numpy.cos(thetas[mask])
+            p_all = assoc_legendre_p_all(
+                self.lmax,
+                self.lmax,
+                numpy.cos(self.angles[idx][0]),
+                norm=True,
+            )[0]
+            phase = numpy.exp(1.0j * self.mvec * phis)
+            Plms_first = phase * _scaled_plm_for_current_l(
+                p_all,
+                self.lvec,
+                self.mvec,
+                self.lvec,
             )
-            Plms_first = lpmv(self.mvec.astype(numpy.int64), self.lvec.astype(numpy.int64), numpy.cos(thetas))
-            F1lmarray = self.ReturnF1lmArray(thetas, Plms_first, Plms_second)
-            F2lmarray = self.ReturnF2lmArray(thetas, Plms_first, Plms_second)
-            coeff = numpy.sqrt((2 * self.lvec + 1) / 4.0 / numpy.pi) * numpy.exp(1.0j * self.mvec * phis)
-            self.Warray[idx] = 1.0 * coeff * self.Nlmarray * F1lmarray
-            self.Xarray[idx] = 1.0j * coeff * self.Nlmarray * F2lmarray
+            Plms_second = phase * _scaled_plm_for_current_l(
+                p_all,
+                self.lvec,
+                self.mvec,
+                self.lvec - 1.0,
+            )
+            self.Warray[idx] = self.ReturnF1lmArray(thetas, Plms_first, Plms_second)
+            self.Xarray[idx] = 1.0j * self.ReturnF2lmArray(
+                thetas,
+                Plms_first,
+                Plms_second,
+            )
 
     def CalcWi(self):
         """Cache the explicit W basis lists for each retained pixel."""
